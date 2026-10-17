@@ -28,7 +28,22 @@ def time_ms(fn):
     return statistics.median(times), statistics.stdev(times)
 
 
+def sweep(spec):
+    """Max error of one config across K on the adversarial magnitude, keyed k<K> in errors. Used by post-mortems."""
+    params = kernel.Params(**spec["params"])
+    m = Metrics(target="sweep", params=params.dict(), compiled_ok=True)
+    for K in spec["ks"]:
+        x, w, b = data.make(512, 512, K, data.CASES[2][4])
+        ref = data.reference(x, w, b)
+        y = kernel.run(params, x, w, b).float()
+        m.errors[f"k{K}"] = ((y - ref).abs() / ref.abs().clamp_min(1)).max().item()
+    m.adv_error = max(m.errors.values())
+    return m
+
+
 def measure(spec):
+    if spec["target"] == "sweep":
+        return sweep(spec)
     if spec["target"] == "eager":
         fn, params = data.eager, None
     else:
