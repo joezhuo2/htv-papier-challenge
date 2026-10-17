@@ -1280,3 +1280,49 @@ def test_a_retest_refusal_says_which_run_already_had_the_config(tmp_path):
     text = of(o, "plan_change")[-1]["text"]
     assert text == ("\"Try the tanh approximate GELU.\" is not retested because that exact config, 64x64x32 tiles, 4 warps, 3 stages, FP32 accumulation, "
                     "approx GELU, already ran as H1 on prec (inconclusive). The hunch was last tested in H2 (confirmed).")
+
+
+# ---- fixes from the latest full recording ----
+
+def test_a_rejudge_during_a_run_keeps_the_branch_rejected_and_its_help_applies_to_the_successor(tmp_path):
+    prec = {"type": "add_directive", "lens": "precision", "text": "Max error under 1e-3 on both batches."}
+
+    class Racing(Engine):
+        """The Precision directive lands while the inconclusive H2 is on the GPU, as the listener thread would apply it."""
+        def __call__(self, spec, run_id):
+            if spec.get("params") == INCONCLUSIVE and "/H2-" in run_id:
+                def listener():
+                    with o.lock:
+                        o.handle(prec)
+                threading.Thread(target=listener, daemon=True).start()
+                wait_for(o, lambda: "speed2" in o.branches)
+            return super().__call__(spec, run_id)
+
+    o = help_session(tmp_path, engine=Racing())
+    drive(o, [(judged(o, 1), SPEED), (asked(o), {"type": "answer_help", "help": "hq1", "option": "tile_search", "by": "speed"})])
+    req = of(o, "help_requested")
+    assert len(req) == 1 and req[0]["help"]["blocks"] == "speed2" and "applies to speed2" in req[0]["help"]["question"]
+    statuses = [e["status"] for e in of(o, "branch_status") if e["branch"] == "speed"]
+    assert statuses.count("rejected") == 1 and statuses[statuses.index("rejected"):] == ["rejected"]
+    assert o.branches["speed"].status == "rejected" and o.extra.get("speed2") == 2 and "speed" not in o.extra
+    assert "speed2" in next(e["text"] for e in of(o, "plan_change") if e["help"] == "hq1")
+    assert_contract(o.log.events)
+
+
+def test_a_rejudge_that_flips_several_runs_reissues_each_help_request_once(tmp_path):
+    from agent.orchestrator import Branch, Hyp
+    from harness.kernel import Params
+    o = make(tmp_path, Asker())
+    o.naive = met(2.0)
+    for b in (Branch("main", [], "Baseline", "both"), Branch("speed", ["main"], "Speed lens", "speed", status="waiting_on_human")):
+        o.branches[b.id] = b
+    for i, p in enumerate((Params(128, 128, 32, 4, 3, acc="fp16"), Params(128, 128, 32, 8, 3, acc="fp16"))):
+        x = Hyp(f"H{i + 1}", "speed", "c", {"min_speedup": 1.02, "vs": "parent_best", "max_error": 2e-2}, p, run=f"r{i + 1}",
+                metrics=met(0.45, err=1.3e-2, adv=7.1e-2), speedup=1.4, bounds=[{"standard": 2e-2, "adversarial": None, "set_by": "speed"}])
+        x.judgment = judge(x.prediction, x.metrics, 1.4, BAND, 2e-2, None)
+        o.hyps.append(x)
+    o.directives = [{"id": "d1", "lens": "speed", "threshold": 2e-2}]
+    o.request_help(o.hyps[1], o.branches["speed"], "speed")
+    o.add_directive("precision", "Max error under 1e-3 on both batches.")
+    assert [e["help"]["id"] for e in of(o, "help_requested")] == ["hq1", "hq1"]
+    assert of(o, "help_requested")[1]["help"]["blocks"] == "speed2"

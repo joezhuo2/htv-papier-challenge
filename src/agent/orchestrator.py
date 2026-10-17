@@ -557,6 +557,7 @@ class Orchestrator:
         """Re-judges every measured run under the bound now active on its branch, so each verdict shows the bound in force. A run that
         flips from confirmed to rejected rejects its branch, with a post-mortem and a pivot fork."""
         speed = [x["id"] for x in self.directives if x["lens"] == "speed"]
+        flipped = []
         for h in self.hyps:
             j = h.judgment
             bound = self.bounds(self.branches[h.branch].lens)
@@ -565,9 +566,13 @@ class Orchestrator:
             new = judge(h.prediction, h.metrics, h.speedup, h.noise, bound["standard"], bound["adversarial"])
             self.set_verdict(h, new, bound)
             if j.verdict == "confirmed" and new.verdict == "rejected":
-                self.branches[h.branch].status = "rejected"
-                self.log.emit("branch_status", branch=h.branch, status="rejected")
-                if speed:
+                # only the first flip on a branch rejects it and forks, a second one on the same branch gets its post-mortem
+                first = self.branches[h.branch].status != "rejected"
+                if first:
+                    self.branches[h.branch].status = "rejected"
+                    self.log.emit("branch_status", branch=h.branch, status="rejected")
+                    self.pivot(h)  # before the post-mortem, so a run that finishes meanwhile already has a successor
+                if speed and first:
                     self.conflicts += 1
                     batches = [c.name.split()[0] for c in new.checks if c.passed is False and "error" in c.name]
                     self.log.emit("conflict_detected", directives=speed + [d["id"]],
@@ -576,8 +581,9 @@ class Orchestrator:
                 self.post_mortem(h)
                 self.summarize(h, self.branches[h.branch], f"Fork: keep what worked in {h.id} and drop {ruled_out(h.params, self.start_point(h.branch)[0])}.")
                 self.export_failure(h, self.branches[h.branch])
-                self.pivot(h)
-                self.refresh_helps(h)
+                flipped.append(h)
+        if flipped:
+            self.refresh_helps(flipped)
         self.maybe_hybrid()
 
     # ---- branches ----
@@ -661,8 +667,9 @@ class Orchestrator:
         # Only correctness failures end a branch with a post-mortem and a pivot. A missed speedup is a normal miss.
         unsafe = v == "rejected" and any(c.passed is False and "error" in c.name for c in h.judgment.checks)
         if unsafe and b.lens != "both":
-            b.status = "rejected"
-            self.log.emit("branch_status", branch=b.id, status="rejected")
+            if b.status != "rejected":
+                b.status = "rejected"
+                self.log.emit("branch_status", branch=b.id, status="rejected")
             self.post_mortem(h)
             self.summarize(h, b, f"Fork: drop {ruled_out(h.params, self.start_point(b.id)[0])} and keep the rest.")
             self.export_failure(h, b)
@@ -723,16 +730,19 @@ class Orchestrator:
                 + (f", {c.observed}" if (c := next((c for c in x.judgment.checks if c.name.startswith("speedup")), None)) else "")
                 for x in reversed(self.hyps) if x.branch in lineage and x.metrics and x.metrics.latency_ms and x.judgment][:3]
 
-    def refresh_helps(self, h):
-        """After h's verdict flipped, a pending request on a rejected branch moves to its successor (or is withdrawn when none is open),
-        and any pending request whose evidence lists h's run is reissued with the current verdicts. Same id, so an answer still lands."""
+    def refresh_helps(self, flipped):
+        """After a re-judge flipped these runs, a pending request on a rejected branch moves to its successor (or is withdrawn when none
+        is open), and any pending request whose evidence lists a flipped run is reissued with the current verdicts. Same id, so an answer
+        still lands, and at most one reissue per request per re-judge, only when the request changed."""
         for hid, x in self.helps.items():
             if not open_help(x):
                 continue
             b = self.branches[x["branch"]]
             moved = b.status == "rejected"
-            if not moved and not any(e.startswith(f"{h.run}:") for e in x["help"]["evidence"]):
+            hit = next((h for h in flipped if any(e.startswith(f"{h.run}:") for e in x["help"]["evidence"])), None)
+            if not moved and not hit:
                 continue
+            h = next((h for h in flipped if h.branch == b.id), None) or hit or flipped[-1]
             succ = self.live(b.id)
             if succ is None:
                 x["cancelled"] = True
@@ -747,11 +757,18 @@ class Orchestrator:
                                    "which keeps running meanwhile.")
                 req["blocks"] = succ.id
                 x["branch"] = succ.id
+            if req == x["help"]:
+                continue
             x["help"], x["t"] = req, self.log.clock()
             self.log.emit("help_requested", help=req)
 
     def request_help(self, h: Hyp, b: Branch, target, failed=False):
         lineage = self.lineage(b.id)
+        # a re-judge can reject b while h is measured: the request then applies to the successor, which keeps running, and b stays rejected
+        live = self.live(b.id)
+        if live is None:
+            self.log.emit("agent_log", text=f"{b.id} was rejected while {h.id} ran and no branch continues it, so I am not asking for help on it.")
+            return
         hid = f"hq{len(self.helps) + 1}"
         if failed:
             runs = [x for x in reversed(self.hyps) if x.branch == b.id and x.metrics and x.metrics.latency_ms is None][:2]
@@ -767,17 +784,21 @@ class Orchestrator:
             options = [{"id": "tile_search", "label": "Keep tuning tiles and warps"},
                        {"id": "accept", "label": f"Accept {speed.observed.split(' ')[0]} and stop this branch"},
                        {"id": "other", "label": "Suggest something else"}]
+        if live is not b:
+            question += f" {b.id} was rejected while {h.id} ran, so an answer applies to {live.id}, which keeps running meanwhile."
         req = {
             "id": hid, "target": target,
             "question": question,
             "evidence": evidence,
             "options": options,
-            "default": "tile_search", "blocks": b.id, "deadline_s": int(self.help_deadline_s),
+            "default": "tile_search", "blocks": live.id, "deadline_s": int(self.help_deadline_s),
             "what_changes": "Keep tuning adds two more iterations on this branch, accept closes it, and a suggestion becomes the next hypothesis to test.",
         }
-        self.helps[hid] = {"help": req, "branch": b.id, "t": self.log.clock(), "answered": False, "expired": False, "cancelled": False,
+        self.helps[hid] = {"help": req, "branch": live.id, "t": self.log.clock(), "answered": False, "expired": False, "cancelled": False,
                            "lineage": lineage, "failed": failed}
         self.log.emit("help_requested", help=req)
+        if live is not b:
+            return
         b.status = "waiting_on_human"
         self.log.emit("branch_status", branch=b.id, status="waiting_on_human")
         others = [x.id for x in self.branches.values() if x.status == "running"]
@@ -874,11 +895,13 @@ class Orchestrator:
         self.export([("answer", f"{cmd['by'].capitalize()} lens answer to {req['id']}: {label}", f"{req['id']}-answer.md", ex.answer_md(req, cmd, plan))])
 
     def reopen(self, b):
-        if b.status != "running":
+        if b.status not in ("running", "rejected"):  # a rejected branch is never reopened, its successor continues it
             b.status = "running"
             self.log.emit("branch_status", branch=b.id, status="running")
 
     def close(self, b, status):
+        if b.status == "rejected":
+            return
         b.status = status
         self.log.emit("branch_status", branch=b.id, status=status)
 
