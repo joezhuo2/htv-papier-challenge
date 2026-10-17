@@ -141,6 +141,11 @@ def change(a: Params, b: Params):
     return ", ".join(diff) or "no parameter change"
 
 
+def direction(k):
+    """block_m and block_n move together as the output tile, every other knob is its own direction."""
+    return "tile" if k in ("block_m", "block_n") else k
+
+
 def value_text(k, v):
     return f"{v.upper()} accumulation" if k == "acc" else f"{v} GELU" if k == "gelu" else f"{k} {v}"
 
@@ -390,6 +395,10 @@ class Orchestrator:
         """Recording mode: the main branch stops after H0 so the session waits for a lens directive."""
         self.record, self.max_hyps, self.main_iters = True, max_hyps, 1
 
+    def expecting(self):
+        """Whether a lens has yet to send a directive, the only reason to keep an idle session open."""
+        return bool({"speed", "precision"} - {d["lens"] for d in self.directives})
+
     def base_capped(self):
         return self.max_hyps is not None and sum(not h.bonus for h in self.hyps) >= self.max_hyps
 
@@ -433,6 +442,13 @@ class Orchestrator:
                     self.maybe_hybrid()
                     if not (self.hybrid and self.hybrid["state"] == "proposed"):
                         break  # help deadlines are not waited out, but a proposed hybrid waits for approval or its deadline
+                if not busy and not self.expecting():
+                    # nothing runs, nothing waits on a human, and both lenses have spoken: waiting longer only adds an idle tail
+                    self.maybe_hybrid()
+                    if not self.pending():
+                        unused = f" with {self.max_hyps - sum(not h.bonus for h in self.hyps)} of its {self.max_hyps} hypotheses unused" if self.max_hyps else ""
+                        self.log.emit("agent_log", text=f"Every branch is done and both lenses have sent a directive, so the session ends{unused}.")
+                        break
                 if self.record:
                     if self.base_capped():
                         idle = time.monotonic()
@@ -482,10 +498,11 @@ class Orchestrator:
             if h.judgment and h.id not in self.summarized:
                 self.summarize(h, self.branches[h.branch], "Session stopped before the next step." if self.stopped else "Session finished.")
         ledger = [{"hypothesis": h.id, "verdict": h.judgment.verdict, "history": h.history} for h in self.hyps if h.judgment]
-        best = self.best_run()
+        best = self.fastest()
         lat = best.metrics.latency_ms if best else self.naive.latency_ms
-        # one metric for the best run everywhere: confirmed runs are ranked by latency, and the ratios are the baselines' latency over it
-        out = {"run": best.run if best else "naive", "vs_naive": round(self.naive.latency_ms / lat, 2), "vs_eager": round(self.eager.latency_ms / lat, 2)}
+        # one metric for the best run everywhere: the baselines' latency over the fastest run within every bound, shown with its verdict
+        out = ({"run": best.run, "hypothesis": best.id, "verdict": best.judgment.verdict} if best else {"run": "naive"}) \
+            | {"vs_naive": round(self.naive.latency_ms / lat, 2), "vs_eager": round(self.eager.latency_ms / lat, 2)}
         if ledger:
             self.export([("ledger", f"Hypothesis ledger {self.hyps[0].id} to {self.hyps[-1].id}", "ledger.md",
                           ex.ledger_md(self.hyps, out if best else None, self.naive.latency_ms, self.eager.latency_ms))]
@@ -552,7 +569,7 @@ class Orchestrator:
                 y = next((h for h in self.hyps if h.id == self.hunches.get(hid) and h.judgment), None)
                 hunches.append({"directive": hid, "lens": x["cmd"]["by"], "text": note,
                                 "outcome": f"{y.id} on {y.branch} ran {params_text(y.params)}: {self.outcome(y)}" if y else self.hunches.get(hid, "not run")})
-        best_run = best and {"run": best.run, "hypothesis": best.id, "branch": best.branch, "params": best.params.dict(),
+        best_run = best and {"run": best.run, "hypothesis": best.id, "verdict": best.judgment.verdict, "branch": best.branch, "params": best.params.dict(),
                              "latency_ms": best.metrics.latency_ms} | {k: out[k] for k in ("vs_naive", "vs_eager")}
         return {"best": best_run, "ruled_out": ruled, "next": nxt, "human": human, "hunches": hunches}
 
@@ -819,6 +836,12 @@ class Orchestrator:
               and (branch is None or h.branch in self.lineage(branch))]
         return min(ok, key=lambda h: h.metrics.latency_ms) if ok else None
 
+    def fastest(self):
+        """The session's result: the lowest latency among measured runs inside every active bound, whatever their verdict, so a run that
+        missed its predicted gain but is the fastest correct one is reported (with its verdict). Branch start points stay on best_run."""
+        ok = [h for h in self.hyps if h.judgment and h.metrics and h.metrics.latency_ms and self.failed_bound(h) is None]
+        return min(ok, key=lambda h: h.metrics.latency_ms, default=None)
+
     def start_point(self, bid):
         best = self.best_run(bid)
         return (best.params, best.metrics) if best else (NAIVE, self.naive)
@@ -856,7 +879,9 @@ class Orchestrator:
         if h.metrics.latency_ms is None:
             self.post_mortem(h)
         b.fails = b.fails + 1 if h.metrics.latency_ms is None else 0
-        if b.fails >= 2 and not any(x["branch"] == b.id and open_help(x) for x in self.helps.values()) and not self.capped():
+        # no help is asked for, and the branch stops, once the cap has no hypothesis left that is not already promised elsewhere
+        spent = self.max_hyps is not None and self.room()[0] == 0 and not self.promised(b.id)
+        if b.fails >= 2 and not any(x["branch"] == b.id and open_help(x) for x in self.helps.values()) and not spent:
             target = b.lens if b.lens != "both" else "speed"
             self.summarize(h, b, f"Ask the {target.capitalize()} lens how to continue after two failed runs in a row.")
             self.request_help(h, b, target, failed=True)
@@ -877,15 +902,17 @@ class Orchestrator:
             self.post_mortem(h)
 
         b.misses = 0 if v == "confirmed" else b.misses + 1
-        if v == "inconclusive" and not any(x["branch"] == b.id for x in self.helps.values()) and not self.capped():
+        if v == "inconclusive" and not any(x["branch"] == b.id for x in self.helps.values()) and not spent:
             target = b.lens if b.lens != "both" else "speed"
             self.summarize(h, b, f"Ask the {target.capitalize()} lens whether to keep tuning or change approach.")
             self.request_help(h, b, target)
             return
         budget = (b.budget or (self.main_iters if b.id == "main" else self.branch_iters)) + self.extra.get(b.id, 0)
         # two misses in a row end a branch, unless a lens owner was promised more iterations on it
-        done = b.iters >= budget or (b.misses >= 2 and not self.promised(b.id))
-        if v == "rejected":
+        done = b.iters >= budget or (b.misses >= 2 and not self.promised(b.id)) or spent
+        if spent and b.id != "merge":
+            nxt = "Stop this branch: no hypothesis budget remains for more iterations."
+        elif v == "rejected":
             nxt = ("Stop this branch and wait for a lens directive." if done
                    else f"Try a different change on this branch, avoiding what the {h.id} post-mortem ruled out." if h.id in self.pms
                    else "Try a different change on this branch.")
@@ -1006,9 +1033,8 @@ class Orchestrator:
             "evidence": evidence,
             "options": options,
             "default": "tile_search", "blocks": live.id, "deadline_s": int(self.help_deadline_s),
-            "what_changes": (f"Keep tuning adds {'two more iterations' if n == 2 else 'one more iteration'} on this branch, accept closes it, and a "
-                             "suggestion becomes the next hypothesis to test." if n else
-                             f"No answer can add iterations because {short}, so this branch closes after any answer, which is recorded."),
+            "what_changes": (f"Keep tuning adds {'two more iterations' if n == 2 else 'one more iteration'} on this branch"
+                             + (f" ({short})" if short else "") + ", accept closes it, and a suggestion becomes the next hypothesis to test."),
         }
         self.helps[hid] = {"help": req, "branch": live.id, "t": self.log.clock(), "answered": False, "expired": False, "cancelled": False,
                            "lineage": lineage, "failed": failed}
@@ -1040,8 +1066,9 @@ class Orchestrator:
                 self.close(b, "done")
                 continue
             self.promise(hid, b, n)
-            self.log.emit("plan_change", help=hid, text=f"No answer to {hid} by the deadline, so I am proceeding on the default assumption: keep tuning tiles and warps on {b.id}"
-                                                        + (f" for one more iteration, not two, because {short}. " if short else ". ")
+            self.log.emit("plan_change", help=hid, text=f"No answer to {hid} by the deadline, so I am proceeding on the default assumption: keep tuning tiles and warps on {b.id} "
+                                                        f"for {'two more iterations' if n == 2 else 'one more iteration'}"
+                                                        + (f", {short}. " if short else ". ")
                                                         + "Results on this branch are flagged assumption pending until an answer arrives.")
             self.reopen(b)
 
@@ -1054,15 +1081,14 @@ class Orchestrator:
         self.promises.append({"ref": ref, "branch": b.id, "n": n, "start": sum(h.branch == b.id for h in self.hyps)})
 
     def room(self, want=2):
-        """(iterations a help answer can promise, up to want, why fewer). The cap minus hypotheses counted against it and iterations
-        already promised on any branch; want when the session is uncapped."""
+        """(iterations a help answer can promise, up to want, what the cap has left as a phrase). The cap minus hypotheses counted against
+        it and iterations already promised on any branch; (want, "") when the session is uncapped."""
         if self.max_hyps is None:
             return want, ""
         used = sum(not h.bonus for h in self.hyps)
         owed = sum(self.promised(bid) for bid in {pr["branch"] for pr in self.promises})
         n = max(0, min(want, self.max_hyps - used - owed))
-        why = (f"the {self.max_hyps} hypothesis cap has {self.max_hyps - used} left" + (f" and {owed} of those are already promised" if owed else ""))
-        return n, why if n < want else ""
+        return n, f"the {self.max_hyps} hypothesis cap has {self.max_hyps - used} left" + (f" and {owed} of those are already promised" if owed else "")
 
     def answer(self, cmd):
         x = self.helps.get(cmd["help"])
@@ -1097,7 +1123,7 @@ class Orchestrator:
             # a late answer revises the iterations the deadline default already promised, it adds none
             if x["expired"]:
                 n = next((pr["n"] for pr in self.promises if pr["ref"] == cmd["help"]), 0)
-                short = "" if n == 2 else "the deadline default found no room" if n == 0 else "the deadline default promised only one"
+                short = "the deadline default found no room" if n == 0 else ""
             else:
                 n, short = self.room()
             if n == 0:
@@ -1108,7 +1134,7 @@ class Orchestrator:
                 self.export_answer(x["help"], cmd, text)
                 return
             more = "two more iterations" if n == 2 else "one more iteration"
-            fewer = f" Not two, because {short}." if short else ""
+            fewer = f" {short[0].upper()}{short[1:]}." if short else ""
             if other:
                 delta = hyp.hunch_change(note) or {}
                 p, e, why, dup = self.plan(b, delta) if delta else (None, None, None, None)
@@ -1198,7 +1224,7 @@ class Orchestrator:
                                  if b.pivot else [])
                               + [f"Papiers {n.get('kind') or 'item'} from \"{n.get('document_title') or n['title']}\": {n['excerpt']}" for n in notes],
                               self.bounds(b.lens)["standard"], self.headroom,
-                              [f"{k} {a} to {v} ({x.id}, {self.outcome(x)})" for (k, a, v), x in self.rejected_deltas().items()])
+                              self.refused_lines())
         why, first = "", ""
         for attempt in range(3):
             text = self.ask_or_wait(messages, f"{b.id}-{b.iters}-{attempt}", b.id)
@@ -1289,27 +1315,58 @@ class Orchestrator:
                 out[(keys[0], getattr(h.params, keys[0]))] = h
         return out
 
-    def rejected_deltas(self):
-        """{(knob, from, to): hypothesis} for every rejected run that changed exactly one knob from what it was timed against, on any
-        branch. A proposal that makes one of these changes again, alone or with others, is refused."""
-        out = {}
-        for h in self.hyps:
-            if h.judgment and h.judgment.verdict == "rejected" and len(ks := self.knobs(h)) == 1:
-                out.setdefault((ks[0], getattr(self.baseline(h)[0], ks[0]), getattr(h.params, ks[0])), h)
-        return out
+    def blamed(self, h):
+        """(changes, lost) for a measured run: the (knob, from, to) changes it made, and whether it lost. A run loses when it breaks an
+        active bound, which blames only its precision or GELU change when it made one, or when it is slower than what it was timed
+        against. A smaller gain than predicted is not a loss."""
+        base = self.baseline(h)[0]
+        bad = self.failed_bound(h) is not None
+        keys = pivot_keys(h.params, base) if bad else self.knobs(h)
+        return [(k, getattr(base, k), getattr(h.params, k)) for k in keys], bad or self.gain(h) < 1.0
+
+    def losing(self, hyps=None):
+        """{(knob, from, to): [runs that lost with it]} for the losing directions: a change that lost on its own, or that lost in two or
+        more runs together with other changes and never came with a gain inside every bound. Any branch counts. "On its own" treats
+        block_m and block_n as one direction, the output tile."""
+        lost, won, alone = {}, set(), set()
+        for h in self.hyps if hyps is None else hyps:
+            if not (h.judgment and h.metrics and h.metrics.latency_ms):
+                continue
+            changes, bad = self.blamed(h)
+            if not bad:
+                won.update(changes)
+                continue
+            for d in changes:
+                lost.setdefault(d, []).append(h)
+            if len({direction(k) for k, _, _ in changes}) == 1:
+                alone.update(changes)
+        return {d: xs for d, xs in lost.items() if d in alone or len(xs) >= 2 and d not in won}
+
+    def isolated(self, d, xs):
+        """The run that lost with change d and nothing outside its direction, or None when d only lost together with other changes."""
+        return next((x for x in xs if {direction(k) for k, _, _ in self.blamed(x)[0]} == {direction(d[0])}), None)
+
+    def refused_lines(self):
+        return [f"{k} {a} to {b} (" + (f"lost alone in {e.id}, {self.outcome(e)}" if (e := self.isolated((k, a, b), xs))
+                                       else f"lost in {', '.join(x.id for x in xs)}") + ")" for (k, a, b), xs in self.losing().items()]
 
     def vet(self, start: Params, p: Params, claim):
-        """Why a proposal is refused before it runs, or None: an exact repeat, a change already rejected on its own, a rejected config with
+        """Why a proposal is refused before it runs, or None: an exact repeat, a losing direction (see losing), a rejected config with
         one more knob that already hurt, or a claim that sets a knob to a value shown to hurt without citing the run that showed it."""
         ran = next((x for x in self.hyps if x.params == p), None)
         if ran:
             return f"{params_text(p)} already ran as {ran.id} on {ran.branch} ({self.outcome(ran) if ran.judgment else 'running'})"
-        deltas = self.rejected_deltas()
-        for k in p.dict():
-            e = deltas.get((k, getattr(start, k), getattr(p, k)))
-            if e:
-                return (f"it changes {k} {getattr(start, k)} to {getattr(p, k)}, which {e.id} on {e.branch} already tested on its own and was rejected "
-                        f"({self.outcome(e)}); that change is refused on every branch")
+        lost = self.losing()
+        changes = [(k, getattr(start, k), getattr(p, k)) for k in p.dict() if getattr(start, k) != getattr(p, k)]
+        for d in changes:
+            if d in lost and (e := self.isolated(d, lost[d])):
+                return (f"it changes {d[0]} {d[1]} to {d[2]}, which {e.id} on {e.branch} already tested on its own and lost ({self.outcome(e)}); "
+                        "that change is refused on every branch")
+        hit = [d for d in changes if d in lost]
+        if hit and len({direction(k) for k, _, _ in changes}) > 1:
+            return ("it repeats changes that lost before without isolating them: "
+                    + ", ".join(f"{k} {a} to {b} (lost in {', '.join(x.id for x in lost[(k, a, b)])})" for k, a, b in hit)
+                    + "; test one of them alone or change something else")
         hurt = self.hurts()
         for x in self.hyps:
             if not (x.judgment and x.judgment.verdict == "rejected"):

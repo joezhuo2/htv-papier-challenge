@@ -14,20 +14,21 @@ export function ResultCard({ view }: { view: View }) {
   return (
     <div className="stack result" data-testid="result-card" style={{ overflow: 'auto', minHeight: 0 }}>
       <article className="card focus">
-        <div className="row"><h2>Best confirmed result</h2><MockTag on={view.mock} /></div>
+        <div className="row"><h2>Best result</h2><MockTag on={view.mock} /></div>
         {best && run?.metrics ? (
           <>
             <p className="strong" style={{ fontSize: 20 }}>{best.vs_naive.toFixed(2)}x faster than naive, {best.vs_eager.toFixed(2)}x vs PyTorch eager</p>
             <p className="small">
-              <span className="tag" data-testid="best-label">best confirmed</span> <span className="mono">{run.id}</span>
+              <span className="tag" data-testid="best-label">best run</span> <span className="mono">{run.id}</span>
+              {' '}<VerdictChip verdict={best.verdict ?? view.verdicts[run.hypothesis]?.verdict} />
               {view.final?.best ? <> (<span className="mono">{view.final.best.hypothesis}</span>)</> : null} on <span className="mono">{run.branch}</span>, {ms(run.metrics.latency_ms)}, {run.metrics.tflops.toFixed(1)} TFLOPS,
               {' '}max error {run.metrics.max_error.toExponential(1)}, adversarial {run.metrics.adv_error.toExponential(1)}
             </p>
             {run.params ? <p className="mono small">{paramText(run.params)}</p> : null}
-            <p className="small muted">The fastest confirmed run by latency; vs naive and vs eager are the session baselines' latency over this run's.</p>
+            <p className="small muted">The fastest run inside every active bound, whatever its verdict; vs naive and vs eager are the session baselines' latency over this run's.</p>
             {view.verdicts[run.hypothesis] ? <p className="small">Judged against {boundText(view.verdicts[run.hypothesis].bound)}.</p> : null}
           </>
-        ) : <p className="empty">No confirmed result in this session.</p>}
+        ) : <p className="empty">No run stayed inside every bound in this session.</p>}
       </article>
       {view.final ? <FinalSections report={view.final} /> : null}
       <article className="card">

@@ -19,7 +19,7 @@ describe('chapters', () => {
       ['post_mortem', 'Post-mortem H1', 74000],
       ['help', 'Help request', 97000],
       ['hybrid', 'Hybrid', 152000],
-      ['end', 'Best confirmed result', 176000],
+      ['end', 'Best result', 176000],
     ])
   })
 
@@ -82,9 +82,9 @@ describe('labels, tooltips and the result screen', () => {
     expect(screen.queryByTestId('result-card')).toBeNull()
   })
 
-  it('result card says so when nothing was confirmed', () => {
+  it('result card says so when no run stayed inside every bound', () => {
     render(<ResultCard view={fold(demoScript.slice(0, 3))} />)
-    expect(screen.getByText('No confirmed result in this session.')).toBeTruthy()
+    expect(screen.getByText('No run stayed inside every bound in this session.')).toBeTruthy()
   })
 
   it('first load is clean: titled, no selection, log hidden', () => {

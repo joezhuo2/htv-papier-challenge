@@ -19,7 +19,7 @@ export function chapters(events: DemoEvent[]): Chapter[] {
     if (e.type === 'post_mortem') add('post_mortem', `Post-mortem ${e.post_mortem.hypothesis}`, i, e.post_mortem.hypothesis)
     if (e.type === 'help_requested') add('help', 'Help request', i)
     if (e.type === 'hybrid_proposed') add('hybrid', 'Hybrid', i)
-    if (e.type === 'session_finished') add('end', 'Best confirmed result', i)
+    if (e.type === 'session_finished') add('end', 'Best result', i)
   })
   return out
 }

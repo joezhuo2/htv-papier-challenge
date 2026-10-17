@@ -57,3 +57,11 @@
 31. A help answer, or the deadline default, promises at most what the hypothesis cap leaves after iterations already promised. When none fit, its `plan_change` says so and the branch closes. `help_requested.what_changes` states the same number.
 32. `hybrid_proposed` merges only the changes of a run at 1.00x or better over its parent that passes every active bound, and the best config has to pass them too. When no run qualifies, an `agent_log` line before `final_report` lists each candidate and why it did not qualify.
 33. `papiers_context.note.document_title` for a conversation is the library document whose title shares the most words with it (at least two), otherwise the conversation's own title. Hypothesis claims, notes and post-mortem prose never contain raw Papiers ids.
+
+## Changes made after the 19:33 recording
+
+34. `session_finished.best` and `final_report.best` name the fastest measured run inside every active bound, whatever its verdict, and carry `hypothesis` and `verdict` (`SessionBest`). The result screen is titled "Best result" and shows the verdict chip.
+35. A recording ends with the agent_log line "Every branch is done and both lenses have sent a directive, so the session ends ..." once nothing is runnable or waiting, instead of a default continuation.
+36. No `help_requested` is emitted when the cap has no unpromised hypothesis left. Help `plan_change` texts end with what the cap has left ("The 8 hypothesis cap has 5 left.").
+37. A rejected verdict whose error checks all passed has the reason "Gain smaller than predicted: ..." or "Slower than its parent: ...", ending "Within every error bound."
+

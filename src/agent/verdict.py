@@ -50,6 +50,11 @@ def judge(prediction: dict, m: Metrics, speedup: float | None, noise: float, bou
         checks.append(Check("adversarial max error", f"< {sci(adv_bound)}", sci(m.adv_error), m.adv_error < adv_bound))
 
     failed = [c for c in checks if c.passed is False]
+    if failed and all(c.name.startswith("speedup") for c in failed):
+        # every error bound holds, so the miss is about how much faster it is, not whether it is acceptable
+        what = "Gain smaller than predicted" if speedup >= 1 else f"Slower than {'naive' if vs == 'naive' else 'its parent'}"
+        return Judgment("rejected", False, f"{what}: {speedup:.2f}x vs {vs} (noise +/- {speedup * noise:.2f}x) against >= {target:.2f}x. "
+                                           "Within every error bound.", checks)
     if failed:
         return Judgment("rejected", False, "; ".join(f"{c.name} {c.observed} missed {c.predicted}" for c in failed) + ".", checks)
     if any(c.passed is None for c in checks):

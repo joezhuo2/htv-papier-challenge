@@ -157,9 +157,12 @@ export interface Report {
   best: { run: string; vs_naive: number; vs_eager: number }
 }
 
+// the fastest run inside every active bound, whatever its verdict; older logs have only run and the ratios
+export interface SessionBest { run: string; hypothesis?: string; verdict?: Verdict; vs_naive: number; vs_eager: number }
+
 // computed by the agent from the log at the end of a session, sent just before session_finished
 export interface FinalReport {
-  best: { run: string; hypothesis: string; branch: string; params: Params; latency_ms: number; vs_naive: number; vs_eager: number } | null
+  best: { run: string; hypothesis: string; verdict?: Verdict; branch: string; params: Params; latency_ms: number; vs_naive: number; vs_eager: number } | null
   ruled_out: string[]
   next: string[]
   human: string[] // decisions only a lens owner can make: unanswered requests, an unapproved hybrid, a lens conflict
@@ -200,7 +203,7 @@ export type DemoEvent =
   | Ev<'report_ready', { report: Report }>
   | Ev<'hybrid_proposed', { branches: string[]; text: string }>
   | Ev<'final_report', { report: FinalReport }>
-  | Ev<'session_finished', { ledger: LedgerEntry[]; best: Report['best'] }>
+  | Ev<'session_finished', { ledger: LedgerEntry[]; best: SessionBest }>
   // a visible failure state: the loop waits for a retry command (or retries by itself after retry_in_s) instead of looking frozen
   | Ev<'agent_error', { kind: 'llm_timeout' | 'llm_error' | 'harness_timeout'; text: string; branch?: string; retry_in_s?: number }>
 

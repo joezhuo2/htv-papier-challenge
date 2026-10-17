@@ -21,10 +21,10 @@ const withReport = (): DemoEvent[] => {
 }
 
 describe('final report', () => {
-  it('passes log validation and renders every section with the best run labelled best confirmed', () => {
+  it('passes log validation and renders every section with the best run labelled best run', () => {
     const events = parseLog(withReport().map(e => JSON.stringify(e)).join('\n'))
     render(<ResultCard view={fold(events)} />)
-    expect(screen.getByTestId('best-label').textContent).toBe('best confirmed')
+    expect(screen.getByTestId('best-label').textContent).toBe('best run')
     expect(screen.getByTestId('final-ruled').textContent).toContain('H1 on speed, acc fp32 to fp16: rejected')
     expect(screen.getByTestId('final-what').textContent).toContain('Rerun H4')
     expect(screen.getByTestId('final-needs').textContent).toContain('Nothing is waiting on a lens owner.')

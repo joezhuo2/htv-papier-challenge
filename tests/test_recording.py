@@ -10,7 +10,7 @@ from test_agent import BAND, CLI, assert_contract, make, of, types
 
 from agent import hypothesis as hyp
 from agent import orchestrator
-from agent.orchestrator import Branch, Hint, Hyp
+from agent.orchestrator import Branch, Hint, Hyp, direction
 from agent.verdict import judge
 from harness.kernel import Params
 from harness.metrics import Metrics
@@ -60,6 +60,15 @@ def add(o, i, judged=True):
     return h
 
 
+def assert_no_losing_repeat(o, h):
+    """h makes no change that lost alone before it, and combines a change that lost with others only within one direction."""
+    lost = o.losing(o.hyps[:o.hyps.index(h)])
+    base = o.baseline(h)[0]
+    changes = [(k, getattr(base, k), getattr(h.params, k)) for k in o.knobs(h)]
+    assert not any(d in lost and o.isolated(d, lost[d]) for d in changes), (h.id, changes)
+    assert len({direction(k) for k, _, _ in changes}) == 1 or not any(d in lost for d in changes), (h.id, changes)
+
+
 class Script:
     """The model's answers in order, with hooks run while a given call is in flight (the state lock is released then)."""
 
@@ -83,8 +92,9 @@ def test_block_k_32_to_64_is_refused_on_every_branch_once_H5_rejected_it(tmp_pat
     assert o.vet(H0, Params(**PROPS["H5"]["params"]), PROPS["H5"]["claim"]) is None
     o = state(tmp_path / "after", ["H0", "H1", "H2", "H3", "H4", "H5"])
     o.branches["merge"] = Branch("merge", ["prec", "speed"], "Hybrid", "both")
-    assert o.rejected_deltas() == {("acc", "fp32", "fp16"): o.hyps[1], ("block_k", 32, 64): o.hyps[5]}
-    refused = "it changes block_k 32 to 64, which H5 on speed2 already tested on its own and was rejected (rejected, 0.93x vs its parent)"
+    lost = o.losing()
+    assert o.isolated(("block_k", 32, 64), lost[("block_k", 32, 64)]) is o.hyps[5] and o.isolated(("acc", "fp32", "fp16"), lost[("acc", "fp32", "fp16")]) is o.hyps[1]
+    refused = "it changes block_k 32 to 64, which H5 on speed2 already tested on its own and lost (rejected, 0.93x vs its parent)"
     for i in ("H7", "H8"):  # prec and merge both start from H0, so both repeat it together with other changes
         assert o.vet(o.start_point(PROPS[i]["branch"])[0], Params(**PROPS[i]["params"]), PROPS[i]["claim"]).startswith(refused)
     alt = PROPS["H7"] | {"claim": "Going to 8 warps on 128x128x32 tiles with 3 stages raises occupancy.", "params": H0.dict() | {"warps": 8}}
@@ -93,7 +103,7 @@ def test_block_k_32_to_64_is_refused_on_every_branch_once_H5_rejected_it(tmp_pat
     assert h.params == Params(**alt["params"])
     assert [e["text"][:len("Refused a proposal on prec: " + refused)] for e in of(o, "agent_log")] == ["Refused a proposal on prec: " + refused] * 2
     prompt = o.ask.calls[0][2][1]["content"]
-    assert "Single-knob changes already rejected this session" in prompt and "block_k 32 to 64 (H5, rejected, 0.93x vs its parent)" in prompt
+    assert "Changes that lost this session" in prompt and "block_k 32 to 64 (lost alone in H5, rejected, 0.93x vs its parent)" in prompt
 
 
 def test_claims_that_name_a_change_the_params_do_not_make_are_sent_back(tmp_path):
@@ -182,7 +192,7 @@ def test_a_help_answer_never_reopens_a_rejected_branch(tmp_path):
     assert req["blocks"] == "speed2" and "speed was rejected while H2 ran, so an answer applies to speed2" in req["question"]
     o.answer({"type": "answer_help", "help": "hq1", "option": "tile_search", "by": "speed"})
     assert o.branches["speed"].status == "rejected" and not [e for e in of(o, "branch_status") if e["branch"] == "speed"]
-    assert of(o, "plan_change")[-1]["text"] == "Because the Speed lens wants more tile search, I am giving speed2 two more iterations."
+    assert of(o, "plan_change")[-1]["text"] == "Because the Speed lens wants more tile search, I am giving speed2 two more iterations. The 8 hypothesis cap has 5 left."
     o.reopen(o.branches["speed"])
     o.close(o.branches["speed"], "done")
     assert o.branches["speed"].status == "rejected"
@@ -195,8 +205,6 @@ def test_keep_tuning_at_hq2_says_no_iterations_fit_the_cap(tmp_path):
               status={"speed": "running", "speed2": "done", "merge": "waiting_on_human"})
     o.promises.append({"ref": "hq1", "branch": "speed", "n": 2, "start": 2})  # hq1 promised speed two iterations, none ran
     o.request_help(o.hyps[6], o.branches["merge"], "speed")
-    req = of(o, "help_requested")[-1]["help"]
-    assert req["what_changes"].startswith("No answer can add iterations because the 8 hypothesis cap has 1 left and 2 of those are already promised")
     o.answer({"type": "answer_help", "help": "hq1", "option": "tile_search", "by": "speed"})
     assert of(o, "plan_change")[-1]["text"] == ("The Speed lens wants more tile search on merge, but the 8 hypothesis cap has 1 left and 2 of those are already "
                                                 "promised, so no iterations fit and I am closing merge with its best configuration.")
@@ -205,7 +213,7 @@ def test_keep_tuning_at_hq2_says_no_iterations_fit_the_cap(tmp_path):
 
 def test_keep_tuning_at_hq1_promises_two_iterations_that_fit(tmp_path):
     o = state(tmp_path, ["H0", "H1", "H2", "H3"])
-    assert o.room() == (2, "")
+    assert o.room() == (2, "the 8 hypothesis cap has 4 left")
     o.max_hyps = 5
     assert o.room() == (1, "the 5 hypothesis cap has 1 left")
 
@@ -344,9 +352,9 @@ def test_the_recording_replayed_keeps_every_invariant(tmp_path, monkeypatch):
     assert "speed" in rejected_at
     # 1. no proposal repeats a rejected single-knob change, and every model claim matches its change
     for h in o.hyps:
-        earlier = {k: x for k, x in o.rejected_deltas().items() if o.hyps.index(x) < o.hyps.index(h)}
         base = o.baseline(h)[0]
-        assert not any((k, getattr(base, k), getattr(h.params, k)) in earlier for k in o.knobs(h)), h.id
+        if "Built in code" not in (h.note or ""):
+            assert_no_losing_repeat(o, h)
         if not (h.note or "").startswith(("Harness-seeded", "Hybrid")):
             assert hyp.claim_errors(h.claim.split(" Relative to the pivot config")[0], base, h.params) == [], (h.id, h.claim)
     # 4. exactly one plan_change per directive

@@ -1,6 +1,4 @@
-import type {
-  Bound, Branch, Check, DemoEvent, Directive, FinalReport, HelpRequest, Hypothesis, LedgerEntry, Lens, Metrics, PapiersNote, Params, PostMortem, Report, Summary, Verdict,
-} from '@contract/types'
+import type { Bound, Branch, Check, DemoEvent, Directive, FinalReport, HelpRequest, Hypothesis, LedgerEntry, Lens, Metrics, PapiersNote, Params, PostMortem, Report, SessionBest, Summary, Verdict } from '@contract/types'
 
 export interface VerdictView { verdict: Verdict; provisional: boolean; reason: string; checks: Check[]; t: number; bound: Bound }
 
@@ -80,7 +78,7 @@ export interface View {
   report?: Report
   hybrid?: { branches: string[]; text: string; t: number; approved?: boolean; dismissed?: boolean }
   ledger?: LedgerEntry[]
-  best?: Report['best']
+  best?: SessionBest
   final?: FinalReport
   lens: Lens
   selected: Selection

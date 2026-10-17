@@ -201,7 +201,7 @@ def test_one_autonomous_iteration(tmp_path):
                                                           "session_finished"]
     v = of(o, "verdict")[0]
     assert v["verdict"] == "confirmed" and v["checks"][0]["observed"] == "2.95x (noise +/- 0.05x)"
-    assert of(o, "session_finished")[0]["best"] == {"run": "r1", "vs_naive": 2.95, "vs_eager": 1.04}
+    assert of(o, "session_finished")[0]["best"] == {"run": "r1", "hypothesis": "H0", "verdict": "confirmed", "vs_naive": 2.95, "vs_eager": 1.04}
     assert_contract(o.log.events)
     lines = (tmp_path / "events.jsonl").read_text().splitlines()
     assert [json.loads(x) for x in lines] == o.log.events
@@ -959,7 +959,7 @@ def test_a_duplicate_answer_is_ignored_silently_and_keep_tuning_promises_only_wh
     assert len(of(o, "help_answered")) == 1 and not any("Ignored an answer" in e["text"] for e in of(o, "agent_log"))
     assert "duplicate answer to hq1" in (tmp_path / "debug.log").read_text()
     plan = [e["text"] for e in of(o, "plan_change") if e["help"] == "hq1"]
-    assert plan == ["Because the Speed lens wants more tile search, I am giving speed one more iteration. Not two, because the 4 hypothesis cap has 1 left."]
+    assert plan == ["Because the Speed lens wants more tile search, I am giving speed one more iteration. The 4 hypothesis cap has 1 left."]
     assert not any("cap ended the session" in e["text"] for e in of(o, "plan_change"))  # nothing promised was cut
     ev = o.log.events
     last_status = {e["branch"]: e["status"] for e in ev if e["type"] == "branch_status"}
@@ -1396,7 +1396,7 @@ def test_duplicates_and_known_harmful_knobs_are_refused_with_a_logged_reason(tmp
     assert o.vet(start, Params(**P | {"stages": 4}), "x").startswith("128x128x32 tiles, 4 warps, 4 stages, FP32 accumulation, exact GELU already ran as H1")
     assert o.vet(start, Params(**P | {"block_k": 64}), "x") is None  # block_k 64 was never shown to hurt
     # H1 changed only stages 3 to 4 and was rejected, so that change is refused from any start that has stages 3, with or without a citation
-    refused = "it changes stages 3 to 4, which H1 on speed already tested on its own and was rejected (rejected, 0.92x vs its parent)"
+    refused = "it changes stages 3 to 4, which H1 on speed already tested on its own and lost (rejected, 0.92x vs its parent)"
     assert o.vet(Params(**P | {"warps": 8}), Params(**P | {"warps": 8, "stages": 4, "gelu": "approx"}), "H1 aside").startswith(refused)
     assert o.vet(start, Params(**P | {"stages": 4, "block_k": 64}), "Unlike H1, block_k 64 halves the loop count.").startswith(refused)
     # from another start the same value is a different change: it may run, but only citing the run that showed it hurts
@@ -1418,7 +1418,7 @@ def test_a_rejected_config_with_one_more_harmful_knob_is_refused(tmp_path):
     x.params = Params(**P | {"warps": 8})
     x.judgment = j(x.prediction, x.metrics, 0.97, BAND, 1e-3, None)
     why = o.vet(Params(**P | {"block_k": 64}), Params(**P | {"warps": 8, "stages": 4}), "Cites H1 and H2.")
-    assert why.startswith("it changes warps 4 to 8, which H2 on speed already tested on its own and was rejected")
+    assert why.startswith("it changes warps 4 to 8, which H2 on speed already tested on its own and lost")
 
 
 def test_every_rejection_gets_a_post_mortem_with_registers_spills_and_the_param_diff(tmp_path):
@@ -1501,7 +1501,8 @@ def test_the_final_report_comes_before_session_finished_with_one_line_per_hunch(
         orchestrator.DIRECTIVE_GAP_S = gap
     assert types(o)[-2:] == ["final_report", "session_finished"]
     r = of(o, "final_report")[0]["report"]
-    assert r["best"]["run"] == of(o, "session_finished")[0]["best"]["run"] and r["best"]["hypothesis"] == "H0"
+    assert r["best"]["run"] == of(o, "session_finished")[0]["best"]["run"] == o.fastest().run
+    assert (r["best"]["hypothesis"], r["best"]["verdict"]) == (o.fastest().id, o.fastest().judgment.verdict)
     assert any(x.startswith("H1 on speed, acc fp32 to fp16: rejected") for x in r["ruled_out"])
     assert any("Decide whether that error is acceptable" in x and x.startswith("H1 ran 1.43x faster") for x in r["human"])
     assert r["hunches"] == [{"directive": "d1", "lens": "speed", "text": "Try the tanh approximate GELU.",
@@ -1550,7 +1551,7 @@ def test_the_best_run_is_ranked_by_latency_and_reported_with_the_same_metric(tmp
              engine=Windows(), main_iters=3)
     o.run()
     best = of(o, "session_finished")[0]["best"]
-    assert best == {"run": "r2", "vs_naive": round(1.891 / 0.628, 2), "vs_eager": round(0.669 / 0.628, 2)}
+    assert best == {"run": "r2", "hypothesis": "H1", "verdict": "confirmed", "vs_naive": round(1.891 / 0.628, 2), "vs_eager": round(0.669 / 0.628, 2)}
     assert of(o, "final_report")[0]["report"]["best"]["run"] == "r2" and of(o, "final_report")[0]["report"]["best"]["vs_naive"] == best["vs_naive"]
 
 

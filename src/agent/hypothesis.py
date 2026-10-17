@@ -63,8 +63,9 @@ def prompt(branch, directives, start, ledger, avoid, notes=(), bound=1e-3, headr
     if avoid:
         lines.append("Ruled out by earlier post-mortems, do not repeat: " + "; ".join(avoid))
     if refused:
-        lines.append("Single-knob changes already rejected this session. A proposal that makes any of them, alone or with other changes, "
-                     "is refused on every branch: " + "; ".join(refused))
+        lines.append("Changes that lost this session (slower than the parent, or over an error bound), on any branch. One that lost alone is "
+                     "refused in any proposal; one that lost only together with other changes may be tested alone, never combined again: "
+                     + "; ".join(refused))
     lines += [f"Context note: {n}" for n in notes]
     lines.append('Propose the next hypothesis. Use "vs": "parent_best" unless this is the first change from the naive kernel.')
     return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": "\n".join(lines)}]
@@ -149,6 +150,9 @@ def claim_errors(claim, start, p):
     that does not (or moves the other way), and an accumulation dtype or GELU form other than the one in the params."""
     t = claim.lower()
     out = [f"it names {x}, the params do not" for x in mismatches(claim, p)]
+    # only the accumulation dtype has a bit width, "64-bit K-dim" confuses a tile size with a precision
+    out += [f"it names {n}-bit, which no parameter sets (block_k is a tile size in elements)" for n in re.findall(r"\b(\d+)[- ]bits?\b", t)
+            if n not in ("16", "32")]
     for m in CHANGE_RE.finditer(t):
         verb, k, frm, to = m.groups()
         a, b = getattr(start, k), getattr(p, k)
