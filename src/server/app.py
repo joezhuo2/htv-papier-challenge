@@ -65,8 +65,11 @@ def check_papiers():
     exe = papiers.binary()
     if not exe:
         return False, "papiers CLI not found"
-    papiers.search("Triton", limit=1)
-    return True, "search answered"
+    n = papiers.Library().counts()
+    detail = f"the CLI sees {n['highlight']} highlights, {n['note']} notes and {n['document']} documents"
+    if n["highlight"] == 0:
+        return True, f"{detail}. No highlights, so hypotheses fall back to passages and conversations", True
+    return True, detail
 
 
 CHECKS = {"gpu": check_gpu, "omniroute": check_omniroute, "gemini": check_gemini, "nim": check_nim, "papiers": check_papiers}
@@ -74,10 +77,10 @@ CHECKS = {"gpu": check_gpu, "omniroute": check_omniroute, "gemini": check_gemini
 
 def run_check(fn):
     try:
-        ok, detail = fn()
+        ok, detail, *warn = fn()
     except Exception as e:  # noqa: BLE001, a failed check is reported, not raised
-        ok, detail = False, f"{type(e).__name__}: {str(e)[:200]}"
-    return {"ok": ok, "detail": detail}
+        ok, detail, warn = False, f"{type(e).__name__}: {str(e)[:200]}", []
+    return {"ok": ok, "detail": detail} | ({"warn": True} if warn and warn[0] else {})
 
 
 def build():

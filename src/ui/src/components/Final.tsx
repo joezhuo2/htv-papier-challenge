@@ -50,7 +50,7 @@ export function ResultCard({ view }: { view: View }) {
   )
 }
 
-interface Check { ok: boolean; detail: string }
+interface Check { ok: boolean; detail: string; warn?: boolean }
 
 export function Preflight({ onStart, fallback, log }: { onStart: (record: boolean) => void; fallback: string; log: View['log'] }) {
   const [checks, setChecks] = useState<Record<string, Check>>()
@@ -74,7 +74,7 @@ export function Preflight({ onStart, fallback, log }: { onStart: (record: boolea
         <ul className="plain small" style={{ listStyle: 'none', paddingLeft: 0 }}>
           {Object.entries(checks).map(([name, c]) => (
             <li key={name} className="inline" data-testid={`check-${name}`}>
-              <span className={`verdict ${c.ok ? 'confirmed' : 'rejected'}`}>{c.ok ? 'ok' : 'failed'}</span>
+              <span className={`verdict ${!c.ok ? 'rejected' : c.warn ? 'inconclusive' : 'confirmed'}`}>{!c.ok ? 'failed' : c.warn ? 'warning' : 'ok'}</span>
               <span className="strong">{name}</span><span className="muted">{c.detail}</span>
             </li>
           ))}

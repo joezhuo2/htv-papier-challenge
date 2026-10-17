@@ -1139,3 +1139,14 @@ def test_counts_for_the_preflight():
     from agent.papiers import Library
     cli = CLI({("list", "highlight", None): {"items": [{"id": "hl_1"}] * 50, "page": {"nextCursor": "c"}}, ("list", "document", None): {"items": [{"id": "doc_1"}] * 6}})
     assert Library(cli).counts() == {"highlight": "50+", "note": 0, "document": 6}
+
+
+def test_preflight_reports_papiers_counts_and_warns_without_highlights(monkeypatch):
+    from agent import papiers
+    from server import app
+    monkeypatch.setattr(papiers, "binary", lambda: "/bin/papiers")
+    monkeypatch.setattr(papiers.Library, "counts", lambda self: {"highlight": 0, "note": 2, "document": 6})
+    r = app.run_check(app.check_papiers)
+    assert r == {"ok": True, "warn": True, "detail": "the CLI sees 0 highlights, 2 notes and 6 documents. No highlights, so hypotheses fall back to passages and conversations"}
+    monkeypatch.setattr(papiers.Library, "counts", lambda self: {"highlight": 5, "note": 0, "document": 6})
+    assert app.run_check(app.check_papiers) == {"ok": True, "detail": "the CLI sees 5 highlights, 0 notes and 6 documents"}
