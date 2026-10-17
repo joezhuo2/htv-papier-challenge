@@ -3,6 +3,10 @@
 Read this first at 7:30. Newest entries first in each list.
 
 ## Done
+- 05:15 Docs: everything from the overnight chat is now in docs/ (README index, architecture, runbook, findings, contract, ui, ui-plan, pitch-notes) with screenshots of candidate1 in docs/screenshots.
+- 05:05 candidate1 (real session, final code, Gemini, interleaved timing): the flip reproduced (seeded FP16 on the Speed branch at 1.54x +/- 0.12x over its FP32 parent, provisional under 2e-2, rejected 3.6 s later by the Precision directive from logged metrics, post-mortem with the K sweep). Weak as a showcase: the best confirmed result is r1, 2.78x vs naive and 0.90x vs eager, seven of nine hypotheses missed, two help requests timed out to defaults. Not copied to runs/demo.jsonl.
+- 04:55 Repo cleanup: oxlint for the UI (typescript-eslint does not support TypeScript 7) and Ruff for Python, both clean, with the flagged code fixed rather than silenced except two documented exceptions. README documents the judging build, pre-flight, stability script and lint commands. Tests: 84 vitest, 50 pytest, GPU tests pass.
+- 04:55 Recording a fresh real session on the final code as a demo candidate (runs/sessions/candidate1), not yet copied to runs/demo.jsonl.
 - 04:35 Polish list started in the UI: chapters (jump plus auto-pause), plain-language hover definitions, mode pill with the replay compression note, final result screen, clean first load and page title, live pre-flight panel (GPU, Gemini, NIM, Papiers checked for real by GET /preflight), visible timeout state with Retry and Stop, Save as replay, noise band (same-window speedups with +/- spread on cards, run details and chart error bars), judging build (`npm run build:judging`, mock hidden, falls back to /runs/demo.jsonl), replay log schema validation with line-numbered errors. Tests: 84 vitest, 50 pytest.
 - 04:30 Golden test: tests/test_golden.py drives a fixed fake session and pins its event types and payload keys to tests/fixtures/golden_session.jsonl; src/ui/test/golden.test.ts checks that fixture passes UI log validation, folds to a finished session, and uses the same keys as the mock for every shared event type.
 - 04:25 Live controls in the agent and server: the session waits for a Start command (AUTOSTART=1 skips it), LLM failures emit agent_error and wait for Retry or retry by themselves after 30 s, harness timeouts show as "timed out", Stop finishes the session, MAX_HYPS caps a live run (default 1), directives are rate limited (one per lens per 10 s, at most 6).
@@ -13,7 +17,9 @@ Read this first at 7:30. Newest entries first in each list.
 - 04:05 Moved this file to docs/status.md.
 
 ## Pending
-- Polish list, remaining: repo cleanup (lint setup for TypeScript and Python, dead code), Devpost screenshots (need the final real recording, not the overnight logs).
+- Choose and record the demo session, copy its events.jsonl to runs/demo.jsonl (the judging build and the live fallback open it), and retake the Devpost screenshots from it.
+- Bug: after a session finishes, an expired help card can still show a countdown and the tab badges stay lit (seen in the candidate1 result screenshot). Help cards should show "proceeding on assumption" once the deadline has passed in event time, and badges should clear when the session ends.
+- Tier 2 in the agent: approve_hybrid, hybrid_proposed and report_ready are not implemented (the UI supports them).
 - A real recorded session for the demo replay: run with the interleaved timing and Gemini, copy its events.jsonl to runs/demo.jsonl (the judging build and the live fallback both point there).
 - Live rehearsal with the UI against the server (pre-flight, Start, answer a help request, Stop, Save as replay).
 
@@ -21,6 +27,7 @@ Read this first at 7:30. Newest entries first in each list.
 - Best FP32 tiles (128x128x32, 4 warps, 3 stages): 2.75x vs naive (2.70 to 2.78), 1.03x vs eager (1.02 to 1.04).
 - FP16 accumulation, same tiles: 4.03x vs naive, 1.52x vs eager, 1.48x vs the FP32 tiles (1.47 to 1.51), standard error 1.318e-2, adversarial 7.08e-2.
 - Within-run spread about +/- 4%, across-run variation under 1%.
+- More detail in docs/findings.md.
 
 # Status and next steps (written 04:00)
 
