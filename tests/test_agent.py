@@ -786,7 +786,7 @@ def test_record_start_lifts_the_live_cap_and_saves_the_log_as_a_replay(tmp_path,
 
     monkeypatch.setenv("RECORD_HYPS", "3")
     o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.05), h(P | {"warps": 8}, 1.3), h(P | {"gelu": "approx"}, 1.3)),
-             main_iters=4, max_hyps=1, idle_s=5, directive_wait_s=0.2)
+             main_iters=4, max_hyps=1, idle_s=5, directive_wait_s=0.2, end_wait_s=0.2)
     with TestClient(create(lambda: o, checks={}, autostart=False)) as client:
         assert client.get("/preflight").json()["cap"] == 1
         with client.websocket_connect("/ws") as ws:
@@ -863,7 +863,7 @@ def test_a_baseline_that_cannot_run_is_reported_instead_of_crashing(tmp_path):
 
 def test_recording_waits_after_h0_then_continues_on_main_as_a_flagged_default(tmp_path):
     o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.3), h(P | {"warps": 8}, 1.3), default="no json"),
-             main_iters=2, directive_wait_s=0.3, context=lambda q: [{"id": "cnv_1", "title": "t", "excerpt": "e"}])
+             main_iters=2, directive_wait_s=0.3, end_wait_s=0.2, context=lambda q: [{"id": "cnv_1", "title": "t", "excerpt": "e"}])
     o.set_record(3)
     o.run()
     logs = [e["text"] for e in of(o, "agent_log")]
@@ -877,7 +877,7 @@ def test_recording_waits_after_h0_then_continues_on_main_as_a_flagged_default(tm
 
 
 def test_recording_runs_the_speed_branch_after_a_directive_and_never_finishes_on_idle(tmp_path):
-    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.3), default="no json"), directive_wait_s=30, idle_s=0.1)
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.3), default="no json"), directive_wait_s=30, idle_s=0.1, end_wait_s=0.2)
     o.set_record(3)
     run_with(o, [(1, "speed", "Push throughput harder.")])
     hyps = [e["hypothesis"] for e in of(o, "hypothesis_proposed")]

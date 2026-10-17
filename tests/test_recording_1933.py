@@ -81,7 +81,7 @@ def wait(pred, timeout=5):
 # ---- 1. the idle tail ----
 
 def test_a_recording_ends_once_every_branch_is_done_and_both_lenses_have_spoken(tmp_path):
-    o = make(tmp_path, Script(answer("H0")), engine=engine, directive_wait_s=1.0, help_deadline_s=30)
+    o = make(tmp_path, Script(answer("H0")), engine=engine, directive_wait_s=1.0, end_wait_s=0.5, help_deadline_s=30)
     o.set_record(8)
     t = threading.Thread(target=o.run)
     t.start()
@@ -206,7 +206,7 @@ def test_the_recording_replayed_keeps_every_invariant(tmp_path, monkeypatch):
         return engine(spec, run_id)
 
     model = [answer(i) for i in ("H0", "H2", "H3", "H4", "H5", "H6", "H8")]
-    o = make(tmp_path, Script(*model), engine=gpu, directive_wait_s=1.0, help_deadline_s=30)
+    o = make(tmp_path, Script(*model), engine=gpu, directive_wait_s=1.0, end_wait_s=0.5, help_deadline_s=30)
     o.set_record(8)
     t = threading.Thread(target=o.run)
     t.start()

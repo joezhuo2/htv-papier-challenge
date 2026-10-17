@@ -316,7 +316,7 @@ class Orchestrator:
     saves its log as a replay."""
 
     def __init__(self, engine, ask, log: Log, session: str, fast: str, strong: str, band: float,
-                 main_iters=2, branch_iters=3, idle_s=120.0, context=None, help_deadline_s=45.0, max_hyps=None, retry_s=30.0, headroom=None, directive_wait_s=90.0):
+                 main_iters=2, branch_iters=3, idle_s=120.0, context=None, help_deadline_s=45.0, max_hyps=None, retry_s=30.0, headroom=None, directive_wait_s=90.0, end_wait_s=15.0):
         self.engine, self.ask, self.log, self.session = engine, ask, log, session
         self.fast, self.strong, self.band = fast, strong, band
         self.main_iters, self.branch_iters, self.idle_s = main_iters, branch_iters, idle_s
@@ -333,7 +333,7 @@ class Orchestrator:
         self.max_hyps, self.retry_s = max_hyps, retry_s
         self.headroom = headroom
         self.record = False
-        self.directive_wait_s = directive_wait_s
+        self.directive_wait_s, self.end_wait_s = directive_wait_s, end_wait_s
         self.defaulted: set[str] = set()  # branches reopened by the no-directive default, flagged on their hypotheses
         self.waiting = False
         self.announced = False  # the waiting line is logged once per session
@@ -458,29 +458,34 @@ class Orchestrator:
                 self.applied.clear()
                 if busy:
                     idle = time.monotonic()
+                waited = time.monotonic() - idle
+                # a recording keeps a short window open at the end, since a late hunch still runs in a reserved slot past the cap
                 if self.capped():
                     self.maybe_hybrid()
-                    if not (self.hybrid and self.hybrid["state"] == "proposed"):
-                        break  # help deadlines are not waited out, but a proposed hybrid waits for approval or its deadline
-                if not busy and not self.expecting():
+                    if self.hybrid and self.hybrid["state"] == "proposed":
+                        pass  # help deadlines are not waited out, but a proposed hybrid waits for approval or its deadline
+                    elif not self.record:
+                        break
+                    elif waited > self.end_wait_s:
+                        self.log.emit("agent_log", text=f"No directive in {self.end_wait_s:.0f} s and the {self.max_hyps} hypothesis budget is spent, so the session ends.")
+                        break
+                elif not busy and not self.expecting():
                     # nothing runs, nothing waits on a human, and both lenses have spoken: waiting longer only adds an idle tail
                     self.maybe_hybrid()
-                    if not self.pending():
+                    if not self.pending() and (not self.record or waited > self.end_wait_s):
                         unused = f" with {self.max_hyps - sum(not h.bonus for h in self.hyps)} of its {self.max_hyps} hypotheses unused" if self.max_hyps else ""
                         self.log.emit("agent_log", text=f"Every branch is done and both lenses have sent a directive, so the session ends{unused}.")
                         break
-                if self.record:
-                    if self.base_capped():
-                        idle = time.monotonic()
-                    elif not self.waiting:
+                elif self.record:
+                    if not self.waiting:
                         self.waiting = True
                         if not self.announced:
                             self.announced = True
                             self.log.emit("agent_log", text=f"Waiting for a lens directive. With none in {self.directive_wait_s:.0f} s I continue on main with the default.")
-                    elif time.monotonic() - idle > self.directive_wait_s:
+                    elif waited > self.directive_wait_s:
                         self.proceed_default()
                         idle = time.monotonic()
-                elif time.monotonic() - idle > self.idle_s:
+                elif waited > self.idle_s:
                     break
             time.sleep(0.1)
         with self.lock:
