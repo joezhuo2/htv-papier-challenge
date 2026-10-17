@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FeedItem, View } from '../state/reducer'
-import { boundText, clock, hypothesisOf, lensName, ms, parentBest, predictionText, runOf, sci, times } from '../state/derive'
-import { MockTag, VerdictChip } from './Glyph'
+import { boundText, clock, hypothesisOf, lensName, ms, parentBest, predictionText, runOf, sci, times, windowText } from '../state/derive'
+import { Def, MockTag, VerdictChip } from './Glyph'
 import { InformedBy } from './PapiersPanel'
 import type { ReactNode } from 'react'
 
@@ -76,14 +76,14 @@ function SummaryCard({ view, item, onSelectRun, onPostMortem, collapsed, onToggl
               <button className="link mono" onClick={() => onSelectRun(run.id)}>{run.id}</button>{' '}
               {ms(m.latency_ms)}, {m.tflops.toFixed(1)} TFLOPS, max error {sci(m.max_error)}, adversarial {sci(m.adv_error)}
             </dd>
-            <dt>Delta</dt>
-            <dd>
+            <dt><Def term="speedup">Delta</Def></dt>
+            {m.speedups ? <dd data-testid="window-speedups"><Def term="noise">{windowText(m)}</Def>, same timing window</dd> : <dd>
               {base ? <>{times(base / m.latency_ms)} vs previous best ({ms(base)})</> : naive ? <>{times(naive / m.latency_ms)} vs naive</> : null}
               {eager ? <>, {times(eager / m.latency_ms)} vs eager</> : null}
-            </dd>
+            </dd>}
           </>
         ) : null}
-        {vd ? <><dt>Judged against</dt><dd data-testid="judged-bound">{boundText(vd.bound)}</dd></> : null}
+        {vd ? <><dt><Def term="bound">Judged against</Def></dt><dd data-testid="judged-bound">{boundText(vd.bound)}</dd></> : null}
         {trail.length > 1 ? (
           <>
             <dt>Verdict history</dt>

@@ -3,24 +3,30 @@ import react from '@vitejs/plugin-react'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { delimiter, dirname, join, normalize, sep } from 'node:path'
 
 const contract = fileURLToPath(new URL('../contract', import.meta.url))
 const runs = fileURLToPath(new URL('../../runs', import.meta.url))
 
-// serves recorded JSONL logs from the repo runs/ folder at /runs/... in dev
+// serves recorded JSONL logs from the repo runs/ folder at /runs/..., in dev and in vite preview (the judging build)
+const runsHandler = (req: IncomingMessage, res: ServerResponse) => {
+  const path = normalize(join(runs, decodeURIComponent((req.url ?? '').split('?')[0])))
+  if (!path.startsWith(runs + sep) || !existsSync(path) || !statSync(path).isFile()) {
+    res.statusCode = 404
+    return res.end('not found')
+  }
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+  createReadStream(path).pipe(res)
+}
+
 const serveRuns = (): Plugin => ({
   name: 'serve-runs',
   configureServer(server) {
-    server.middlewares.use('/runs', (req, res) => {
-      const path = normalize(join(runs, decodeURIComponent((req.url ?? '').split('?')[0])))
-      if (!path.startsWith(runs + sep) || !existsSync(path) || !statSync(path).isFile()) {
-        res.statusCode = 404
-        return res.end('not found')
-      }
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-      createReadStream(path).pipe(res)
-    })
+    server.middlewares.use('/runs', runsHandler)
+  },
+  configurePreviewServer(server) {
+    server.middlewares.use('/runs', runsHandler)
   },
 })
 
@@ -52,8 +58,9 @@ const papiers = (): Plugin => ({
 export default defineConfig({
   plugins: [react(), serveRuns(), papiers()],
   resolve: { alias: { '@contract': contract } },
+  preview: { proxy: { '/ws': { target: 'ws://127.0.0.1:8000', ws: true }, '/preflight': 'http://127.0.0.1:8000' } },
   server: {
     fs: { allow: ['..'] },
-    proxy: { '/ws': { target: 'ws://127.0.0.1:8000', ws: true } },
+    proxy: { '/ws': { target: 'ws://127.0.0.1:8000', ws: true }, '/preflight': 'http://127.0.0.1:8000' },
   },
 })

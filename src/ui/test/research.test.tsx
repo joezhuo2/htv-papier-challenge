@@ -74,6 +74,7 @@ describe('branch graph and metric chart', () => {
   it('reaches the final graph with five branches', () => {
     render(<App source={{ mode: 'mock' }} />)
     at(180000)
+    fireEvent.click(screen.getByRole('tab', { name: 'Research' }))
     const statuses = ['main', 'speed', 'prec', 'fast', 'merge'].map(b => screen.getByTestId(`node-${b}`).getAttribute('data-status'))
     expect(statuses).toEqual(['done', 'rejected', 'merged', 'merged', 'done'])
   })

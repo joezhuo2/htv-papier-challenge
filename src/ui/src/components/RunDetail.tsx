@@ -1,5 +1,5 @@
 import type { View } from '../state/reducer'
-import { boundText, clock, hypothesisOf, lensName, ms, paramText, predictionText, runOf, sci } from '../state/derive'
+import { boundText, clock, hypothesisOf, lensName, ms, paramText, predictionText, runOf, sci, windowText } from '../state/derive'
 import { InformedBy } from './PapiersPanel'
 import { Glyph, VerdictChip } from './Glyph'
 
@@ -31,10 +31,11 @@ export function RunDetail({ view, onClose }: { view: View; onClose: () => void }
             {m ? (
               <>
                 <dt>Latency</dt><dd>{ms(m.latency_ms)}, {m.tflops.toFixed(1)} TFLOPS</dd>
+                {m.speedups ? <><dt>Speedup</dt><dd>{windowText(m)}, same timing window</dd></> : null}
                 <dt>Error</dt><dd>max {sci(m.max_error)}, adversarial {sci(m.adv_error)}</dd>
                 <dt>VRAM</dt><dd>{m.vram_mb} MB</dd>
               </>
-            ) : <><dt>Status</dt><dd>{run?.failed ? 'failed to compile or timed out' : 'running'}</dd></>}
+            ) : <><dt>Status</dt><dd>{run?.failed ? (run.error === 'timed out' ? 'timed out (15 s harness limit)' : run.error ? `failed: ${run.error}` : 'failed to compile or timed out') : 'running'}</dd></>}
           </dl>
           {(h ? view.trail[h.id] ?? [] : []).map((t, i, all) => (
             <div key={i} className="stack" data-testid="verdict-block" style={{ gap: 4 }}>

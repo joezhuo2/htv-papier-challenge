@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { Lens } from '@contract/types'
-import type { Source } from './source'
+import { DEFAULT_REPLAY, JUDGING, type Source } from './source'
+import { chapters, type Chapter } from './chapters'
+import { Preflight, ResultCard, Stalled } from './components/Final'
 import { useSession } from './useSession'
 import { TopBar } from './components/TopBar'
 import { LensTabs } from './components/LensTabs'
@@ -23,7 +25,9 @@ export function App({ source }: { source: Source }) {
   const { view, dispatch, controls } = s
   const [logOpen, setLogOpen] = useState(false)
   const [closedPm, setClosedPm] = useState<string[]>([])
-  const [tab, setTab] = useState<'research' | 'report'>('research')
+  const [tab, setTab] = useState<'research' | 'report' | 'result'>('research')
+  // the result screen opens once when the session finishes, and a restart returns to the research view
+  useEffect(() => setTab(view.finished ? 'result' : 'research'), [view.finished])
   const openPm = (h: string) => {
     setClosedPm(c => c.filter(x => x !== h))
     requestAnimationFrame(() => {
@@ -53,6 +57,22 @@ export function App({ source }: { source: Source }) {
     return () => window.removeEventListener('keydown', onKey)
   })
 
+  const marks = chapters(s.events)
+  const jump = (c: Chapter) => {
+    if (source.mode !== 'live') controls.seek(c.index)
+    const run = s.events.find(e => e.type === 'run_started' && e.hypothesis === c.hypothesis)
+    if (run?.type === 'run_started') dispatch({ type: 'ui/select', selected: { run: run.run, branch: run.branch } })
+    setTab(c.key === 'end' ? 'result' : 'research')
+  }
+  const save = () => {
+    const blob = new Blob([s.events.map(e => JSON.stringify(e)).join('\n') + '\n'], { type: 'application/x-ndjson' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `war-room-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.jsonl`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
   const waiting = [...new Set(view.helps.filter(h => !h.answer).map(h => h.help.target))]
   const mine = view.helps.filter(h => h.help.target === view.lens)
   const open = mine.filter(h => !h.answer)
@@ -61,10 +81,12 @@ export function App({ source }: { source: Source }) {
   return (
     <div className="app" data-lens={view.lens}>
       <TopBar
-        mode={source.mode} mock={view.mock} now={s.now} paused={s.paused} ended={s.ended} speed={s.speed}
+        mode={source.mode} mock={view.mock} judging={JUDGING} now={s.now} paused={s.paused} ended={s.ended} speed={s.speed}
+        compression={s.compression} chapters={marks} autoPause={s.autoPause}
         onPause={controls.pause} onResume={controls.resume} onStep={controls.step}
         onPrev={controls.prev} canPrev={s.index > 0} onMode={m => { window.location.search = `?mode=${m}` }}
-        onSpeed={controls.setSpeed} onRestart={controls.restart}
+        onSpeed={controls.setSpeed} onRestart={controls.restart} onChapter={jump} onAutoPause={controls.setAutoPause}
+        onStop={() => s.send({ type: 'stop' })} onSave={save}
       />
       <div className="accent-line" />
       <Banner error={s.error} status={s.status} onRetry={s.retry} />
@@ -78,13 +100,16 @@ export function App({ source }: { source: Source }) {
           <PapiersPanel view={view} />
         </aside>
         <section className="col center" aria-label="research">
-          {view.report ? (
+          {view.report || view.finished ? (
             <div className="inline" role="tablist" aria-label="center view">
               <button role="tab" aria-selected={tab === 'research'} aria-pressed={tab === 'research'} onClick={() => setTab('research')}>Research</button>
-              <button role="tab" aria-selected={tab === 'report'} aria-pressed={tab === 'report'} onClick={() => setTab('report')}>Report</button>
+              {view.report ? <button role="tab" aria-selected={tab === 'report'} aria-pressed={tab === 'report'} onClick={() => setTab('report')}>Report</button> : null}
+              {view.finished ? <button role="tab" aria-selected={tab === 'result'} aria-pressed={tab === 'result'} onClick={() => setTab('result')}>Result</button> : null}
             </div>
           ) : null}
-          {tab === 'report' && view.report ? <ReportView view={view} /> : (
+          {source.mode === 'live' && !view.started ? (
+            <Preflight onStart={() => s.send({ type: 'start' })} fallback={`?mode=replay&file=${encodeURIComponent(DEFAULT_REPLAY)}`} />
+          ) : tab === 'result' && view.finished ? <ResultCard view={view} /> : tab === 'report' && view.report ? <ReportView view={view} /> : (
             <>
               <BranchGraph view={view} onSelectBranch={selectBranch} onSelectRun={selectRun} showPending={source.mode !== 'replay'} />
               <div className="chart-row">
@@ -95,6 +120,7 @@ export function App({ source }: { source: Source }) {
           )}
         </section>
         <aside className="col right" aria-label="record">
+          <Stalled view={view} live={source.mode === 'live'} onSend={s.send} />
           {view.postMortems.map(pm => (
             <PostMortemCard
               key={pm.hypothesis} view={view} pm={pm} open={!closedPm.includes(pm.hypothesis)}

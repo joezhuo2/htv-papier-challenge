@@ -1,4 +1,4 @@
-import type { Bound, Hypothesis, Params, Verdict } from '@contract/types'
+import type { Bound, Hypothesis, Metrics, Params, Verdict } from '@contract/types'
 import type { BranchView, HypothesisView, RunView, View } from './reducer'
 
 export const clock = (ms: number) => {
@@ -7,7 +7,7 @@ export const clock = (ms: number) => {
 }
 
 export const sci = (x: number) => x.toExponential(1).replace('.0e', 'e').replace('e+', 'e')
-export const ms = (x: number) => `${x.toFixed(1)} ms`
+export const ms = (x: number) => `${x.toPrecision(3)} ms`
 export const times = (x: number) => `${x.toFixed(2)}x`
 
 export const paramText = (p: Params) =>
@@ -110,4 +110,13 @@ export const ruledOut = (v: View, hyp: string) => {
   if (!next) return `the ${h.id} configuration (${paramText(h.params)})`
   const keys = (Object.keys(h.params) as (keyof Params)[]).filter(k => h.params[k] !== next.params[k])
   return keys.map(k => `${k} ${h.params[k]}`).join(', ') + ` (the ${next.id} pivot keeps everything else)`
+}
+
+// same-window speedups with their measured spread, e.g. "1.45x +/- 0.02x vs best, 3.10x vs naive, 1.05x vs eager"
+export const windowText = (m: Metrics) => {
+  const names = { parent: 'best', naive: 'naive', eager: 'eager' } as const
+  return (['parent', 'naive', 'eager'] as const)
+    .filter(k => m.speedups?.[k] !== undefined)
+    .map(k => `${times(m.speedups![k]!)} +/- ${(m.speedups![k]! * (m.spreads?.[k] ?? 0)).toFixed(2)}x vs ${names[k]}`)
+    .join(', ')
 }

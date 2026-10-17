@@ -2,6 +2,7 @@ import type { KeyboardEvent } from 'react'
 import type { View } from '../state/reducer'
 import { lensName, predictedLatency, runOf, sci, times } from '../state/derive'
 import { useSize } from '../useSize'
+import { GLOSSARY } from '../glossary'
 
 interface Props { view: View; onSelectRun: (r: string) => void }
 
@@ -23,6 +24,8 @@ export function MetricChart({ view, onSelectRun }: Props) {
   const naive = view.baselines?.naive.latency_ms
   const eager = view.baselines?.eager.latency_ms
   const sp = (lat: number) => (naive ? naive / lat : 0)
+  // prefer the speedup timed in the run's own window, fall back to the session baseline for logs without it
+  const runSp = (r: (typeof view.runs)[number]) => r.metrics!.speedups?.naive ?? sp(r.metrics!.latency_ms)
 
   const ghosts = view.hypotheses.flatMap(h => {
     const lat = predictedLatency(view, h)
@@ -32,7 +35,7 @@ export function MetricChart({ view, onSelectRun }: Props) {
   })
   const pending = ghosts.filter(g => !g.run).length
   const slots = Math.max(view.runs.length + pending, 6)
-  const measured = view.runs.filter(r => r.metrics).map(r => sp(r.metrics!.latency_ms))
+  const measured = view.runs.filter(r => r.metrics).map(r => runSp(r))
   const maxY = Math.max(eager ? sp(eager) : 1, ...measured, ...ghosts.map(g => g.value), 2) * 1.12
   const step = niceStep(maxY)
 
@@ -69,8 +72,9 @@ export function MetricChart({ view, onSelectRun }: Props) {
           ))}
           {[{ v: 1, label: 'naive' }, ...(eager ? [{ v: sp(eager), label: 'eager' }] : [])].map(r => (
             <g key={r.label}>
+              <title>{GLOSSARY[r.label as 'eager' | 'naive']}</title>
               <line x1={m.l} x2={m.l + iw} y1={y(r.v)} y2={y(r.v)} stroke="var(--ink)" strokeDasharray="4 4" strokeWidth="1" />
-              <text x={m.l + iw + 6} y={y(r.v) + 4} fontSize="11">{r.label} {times(r.v)}</text>
+              <text x={m.l + iw + 6} y={y(r.v) + 4} fontSize="11" className="term">{r.label} {times(r.v)}</text>
             </g>
           ))}
           {branches.map(b => {
@@ -78,7 +82,7 @@ export function MetricChart({ view, onSelectRun }: Props) {
             if (pts.length < 2) return null
             return (
               <polyline
-                key={b} fill="none" points={pts.map(r => `${x(r.index)},${y(sp(r.metrics!.latency_ms))}`).join(' ')}
+                key={b} fill="none" points={pts.map(r => `${x(r.index)},${y(runSp(r))}`).join(' ')}
                 stroke={selBranch === b ? 'var(--ink)' : '#B9B2A4'} strokeWidth={selBranch === b ? 2 : 1}
               />
             )
@@ -89,7 +93,7 @@ export function MetricChart({ view, onSelectRun }: Props) {
             const gy = y(g.value)
             return (
               <g key={g.h} data-testid={`ghost-${g.h}`} data-resolved={g.run?.finished !== undefined ? 'true' : 'false'}>
-                {done ? <line x1={x(i)} x2={x(i)} y1={gy} y2={y(sp(done.latency_ms))} stroke="var(--muted)" strokeWidth="1" /> : null}
+                {done ? <line x1={x(i)} x2={x(i)} y1={gy} y2={y(runSp(g.run!))} stroke="var(--muted)" strokeWidth="1" /> : null}
                 <circle cx={x(i)} cy={gy} r="6" fill="var(--surface)" stroke="var(--muted)" strokeWidth="1.5" opacity={done ? 0.8 : 1} />
                 {!done && !crowded && !g.run?.failed ? (
                   <text x={x(i) + 10} y={gy + 4} fontSize="11">{g.h} predicted at least {times(g.value)}</text>
@@ -98,13 +102,15 @@ export function MetricChart({ view, onSelectRun }: Props) {
             )
           })}
           {view.runs.filter(r => r.metrics).map(r => {
-            const v = sp(r.metrics!.latency_ms)
+            const v = runSp(r)
+            const spread = (r.metrics!.spreads?.naive ?? 0) * v
             const vd = view.verdicts[r.hypothesis]
             const final = vd && !vd.provisional ? vd.verdict : undefined
             const sel = view.selected.run === r.id
             const cx = x(r.index), cy = y(v)
             return (
               <g key={r.id} {...press(() => onSelectRun(r.id))} data-testid={`point-${r.id}`} aria-label={`${r.id} ${times(v)} ${final ?? 'pending verdict'}`}>
+                {spread > 0 ? <line x1={cx} x2={cx} y1={y(v + spread)} y2={y(v - spread)} stroke="var(--ink)" strokeWidth="1" data-testid={`noise-${r.id}`} /> : null}
                 {sel ? <circle cx={cx} cy={cy} r="9.5" fill="none" stroke="var(--ink)" strokeWidth="1" /> : null}
                 <circle className="hit" cx={cx} cy={cy} r="5" fill={final === 'confirmed' ? 'var(--ink)' : 'var(--surface)'} stroke="var(--ink)" strokeWidth="1" strokeDasharray={vd?.provisional ? '1.5 1.5' : undefined} />
                 {final === 'inconclusive' ? <path d={`M${cx} ${cy - 5} A5 5 0 0 0 ${cx} ${cy + 5} Z`} fill="var(--ink)" /> : null}
@@ -138,7 +144,7 @@ export function AdvPanel({ view }: { view: View }) {
 
   return (
     <div className="chart adv" ref={ref} data-testid="adv-panel">
-      <span className="panel-title">Adversarial error by run</span>
+      <span className="panel-title term" title={GLOSSARY.adversarial} style={{ pointerEvents: 'auto' }}>Adversarial error by run</span>
       {!sel?.metrics ? <p className="empty" style={{ padding: '32px 12px' }}>No runs yet.</p> : gate === null ? (
         <p className="empty" style={{ padding: '36px 12px' }} data-testid="adv-ungated">Not gated under the current lenses. It is measured on every run and shown here once the Precision lens sets a bound.</p>
       ) : (

@@ -44,12 +44,16 @@ export class Player {
     this.emit(e)
   }
 
-  // steps back one event: the caller re-folds emitted() from scratch, so state never depends on undoing an event
-  back() {
+  // moves the cursor to just after event n-1: the caller re-folds emitted() from scratch, so state never depends on undoing an event
+  seek(n: number) {
     this.pause()
-    if (this.cancelled || this.i === 0) return
-    this.i -= 1
+    if (this.cancelled) return
+    this.i = Math.max(0, Math.min(n, this.events.length))
     this.pos = this.i ? this.events[this.i - 1].t : 0
+  }
+
+  back() {
+    this.seek(this.i - 1)
   }
 
   emitted() {

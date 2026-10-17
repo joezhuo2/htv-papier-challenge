@@ -1,43 +1,64 @@
+import type { Chapter } from '../chapters'
 import type { Mode } from '../source'
-import { MAX_GAP_MS } from '../source'
 import { clock } from '../state/derive'
 
 interface Props {
   mode: Mode
   mock: boolean
+  judging: boolean
   now: number
   paused: boolean
   ended: boolean
   speed: number
+  compression?: { from: number; to: number }
+  chapters: Chapter[]
+  autoPause: boolean
+  canPrev: boolean
   onPause: () => void
   onResume: () => void
   onStep: () => void
   onPrev: () => void
-  canPrev: boolean
-  onMode: (m: 'mock' | 'live') => void
   onSpeed: (s: number) => void
   onRestart: () => void
+  onMode: (m: Mode) => void
+  onChapter: (c: Chapter) => void
+  onAutoPause: (on: boolean) => void
+  onStop: () => void
+  onSave: () => void
 }
 
 export function TopBar(p: Props) {
   const replay = p.mode !== 'live'
+  const modes: Mode[] = p.judging ? ['replay', 'live'] : ['mock', 'live']
+  const pill = p.mode === 'live' ? 'live' : p.mode === 'replay' ? 'recorded run' : 'mock'
   return (
     <header className="topbar">
       <h1>Research War Room</h1>
       <span className="muted small">fused matmul + bias + GELU</span>
-      {p.mode === 'live' ? <span className="pill ink">live</span> : null}
-      {p.mode === 'replay' ? (
-        <span className="pill ink" title={`Idle gaps longer than ${MAX_GAP_MS / 1000}s are compressed`}>
-          recorded run <span className="muted">idle gaps compressed</span>
-        </span>
-      ) : null}
+      <span className={`pill ink${p.mode === 'mock' ? ' mock' : ''}`} data-testid="mode-pill">
+        {pill}
+        {p.mode === 'replay' && p.compression && p.compression.from !== p.compression.to ? (
+          <span className="muted" title="Idle gaps longer than 4 s between events are shortened, the order of events is unchanged">
+            idle gaps compressed, {clock(p.compression.from)} to {clock(p.compression.to)}
+          </span>
+        ) : null}
+      </span>
+      {p.mode === 'replay' && p.mock ? <span className="tag mock">mock data</span> : null}
       <div className="toggle" role="group" aria-label="data source">
-        {(['mock', 'live'] as const).map(m => (
+        {modes.map(m => (
           <button key={m} aria-pressed={p.mode === m} onClick={() => p.mode !== m && p.onMode(m)}>{m}</button>
         ))}
       </div>
-      {p.mode === 'replay' && p.mock ? <span className="tag mock">mock data</span> : null}
       <span className="spacer" />
+      {p.chapters.length ? (
+        <select
+          aria-label="jump to chapter" className="chapters" value=""
+          onChange={e => { const c = p.chapters.find(x => x.key === e.target.value); if (c) p.onChapter(c) }}
+        >
+          <option value="">chapters</option>
+          {p.chapters.map(c => <option key={c.key} value={c.key}>{clock(c.t)} {c.label}</option>)}
+        </select>
+      ) : null}
       <span className="mono" aria-label="elapsed">{clock(p.now)}</span>
       {replay ? (
         <div className="controls" role="group" aria-label="presenter controls">
@@ -51,9 +72,15 @@ export function TopBar(p: Props) {
           {[1, 2, 4].map(s => (
             <button key={s} aria-pressed={p.speed === s} onClick={() => p.onSpeed(s)}>{s}x</button>
           ))}
+          <button aria-pressed={p.autoPause} onClick={() => p.onAutoPause(!p.autoPause)} title="Pause at each chapter">auto-pause</button>
           <button onClick={p.onRestart}>restart</button>
         </div>
-      ) : null}
+      ) : (
+        <div className="controls" role="group" aria-label="live controls">
+          <button onClick={p.onSave} title="Download the events received so far as a JSONL replay">save as replay</button>
+          <button onClick={p.onStop} title="Finish the session with what is logged so far">stop</button>
+        </div>
+      )}
     </header>
   )
 }

@@ -1,4 +1,6 @@
+import type { ReactNode } from 'react'
 import type { Verdict } from '@contract/types'
+import { GLOSSARY, type Term } from '../glossary'
 
 export type Mark = Verdict | 'provisional' | 'pending'
 
@@ -25,7 +27,8 @@ export function Glyph({ mark, size = 12 }: { mark: Mark; size?: number }) {
 export function VerdictChip({ verdict, provisional }: { verdict?: Verdict; provisional?: boolean }) {
   const mark: Mark = !verdict ? 'pending' : provisional ? 'provisional' : verdict
   const word = !verdict ? 'pending' : provisional ? `provisionally ${verdict}` : verdict
-  return <span className={`verdict ${mark}`}><Glyph mark={mark} />{word}</span>
+  const tip = !verdict ? undefined : GLOSSARY[provisional ? 'provisional' : verdict]
+  return <span className={`verdict ${mark}`} title={tip}><Glyph mark={mark} />{word}</span>
 }
 
 export function Lock({ x = 0, y = 0, size = 12 }: { x?: number; y?: number; size?: number }) {
@@ -38,3 +41,5 @@ export function Lock({ x = 0, y = 0, size = 12 }: { x?: number; y?: number; size
 }
 
 export const MockTag = ({ on }: { on: boolean }) => (on ? <span className="tag mock">mock</span> : null)
+
+export const Def = ({ term, children }: { term: Term; children: ReactNode }) => <span className="term" title={GLOSSARY[term]}>{children}</span>

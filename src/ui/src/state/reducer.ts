@@ -19,6 +19,7 @@ export interface RunView {
   metrics?: Metrics
   assumption?: boolean
   failed?: boolean
+  error?: string
 }
 
 export interface DirectiveView extends Directive { t: number; affected?: string; mock: boolean }
@@ -65,6 +66,8 @@ export interface View {
   history: Record<string, Verdict[]>
   trail: Record<string, VerdictView[]> // every verdict per hypothesis in order, each with the bound it was judged against
   bound?: Bound // bound of the latest verdict, the active one
+  errors: { t: number; kind: string; text: string; branch?: string; retry_in_s?: number }[]
+  stalled?: { t: number; kind: string; text: string; branch?: string; retry_in_s?: number } // an agent_error not yet followed by progress
   directives: DirectiveView[]
   conflicts: ConflictView[]
   helps: HelpView[]
@@ -91,7 +94,7 @@ export type Action = DemoEvent | UiAction
 
 export const initialView = (lens: Lens = 'speed'): View => ({
   t: 0, mock: false, started: false, finished: false,
-  branches: [], hypotheses: [], runs: [], verdicts: {}, history: {}, trail: {}, directives: [], conflicts: [], helps: [],
+  branches: [], hypotheses: [], runs: [], verdicts: {}, history: {}, trail: {}, errors: [], directives: [], conflicts: [], helps: [],
   postMortems: [], notes: [], reads: [], feed: [], log: [], lens, selected: {},
 })
 
@@ -122,6 +125,7 @@ export function reduce(prev: View, a: Action): View {
   }
   const mock = !!e.mock
   let v: View = expire({ ...prev, t: Math.max(prev.t, e.t), mock: prev.mock || mock }, e.t)
+  if (v.stalled && e.type !== 'agent_error' && e.type !== 'agent_log') v = { ...v, stalled: undefined }
   switch (e.type) {
     case 'papiers_context': {
       const note = e.note && { ...e.note, t: e.t, query: e.query }
@@ -159,7 +163,7 @@ export function reduce(prev: View, a: Action): View {
       const assumption = v.helps.some(h => h.expired && !h.answer && h.help.blocks === e.run.branch)
       // the agent sends null latency for a run that failed to compile or timed out
       const failed = e.run.metrics.latency_ms == null
-      const done = { params: e.run.params, metrics: failed ? undefined : e.run.metrics, finished: e.t, assumption, failed }
+      const done = { params: e.run.params, metrics: failed ? undefined : e.run.metrics, finished: e.t, assumption, failed, error: e.error }
       const known = v.runs.some(r => r.id === e.run.id)
       const runs = known
         ? v.runs.map(r => (r.id === e.run.id ? { ...r, ...done } : r))
@@ -207,6 +211,10 @@ export function reduce(prev: View, a: Action): View {
         hybrid: { branches: e.branches, text: e.text, t: e.t },
         feed: [...v.feed, { kind: 'hybrid', branches: e.branches, text: e.text, t: e.t, mock }],
       }
+    case 'agent_error': {
+      const err = { t: e.t, kind: e.kind, text: e.text, branch: e.branch, retry_in_s: e.retry_in_s }
+      return { ...v, errors: [...v.errors, err], stalled: e.kind === 'harness_timeout' ? v.stalled : err }
+    }
     case 'session_finished':
       return { ...v, finished: true, ledger: e.ledger, best: e.best }
   }

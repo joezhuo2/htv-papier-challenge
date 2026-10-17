@@ -7,7 +7,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "build:judging": "VITE_JUDGING=1 vite build",
+    "dev:judging": "VITE_JUDGING=1 vite"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.3",

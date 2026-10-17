@@ -266,3 +266,7 @@ ul.plain { margin: 0; padding-left: 16px; }
 .working-line { animation: pulse 1.6s ease-in-out infinite; }
 svg .working { animation: pulse 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .card.working, .working-line, svg .working { animation: none; } }
+.term { text-decoration: underline dotted var(--muted); text-underline-offset: 3px; cursor: help; }
+svg text.term { text-decoration: none; }
+.chapters { font: inherit; font-size: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 2px 6px; }
+.pill.mock { border-style: dashed; }

@@ -28,6 +28,7 @@ describe('tier 2', () => {
   it('ledger ends with six rows and the H1 history, report view opens', () => {
     render(<App source={{ mode: 'mock' }} />)
     at(180000)
+    fireEvent.click(screen.getByRole('tab', { name: 'Research' }))
     const rows = within(screen.getByTestId('ledger')).getAllByRole('row')
     expect(rows).toHaveLength(7)
     expect(rows[2].textContent).toContain('was confirmed')
