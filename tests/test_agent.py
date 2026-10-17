@@ -1579,3 +1579,17 @@ def test_notes_name_the_document_and_post_mortems_prefer_an_annotated_highlight(
     assert Orchestrator.best_note(items, "It spills to local memory.")["id"] == "hl_note"
     assert Orchestrator.best_note(items[:2], "It spills to local memory.")["id"] == "hl_plain"
     assert Orchestrator.best_note(items[2:3] + items[3:], "unrelated")["id"] == "hl_low"  # no overlap: the higher ranked annotated one
+
+
+def test_a_second_rejection_on_a_lens_reuses_the_open_pivot_instead_of_forking_another(tmp_path):
+    from agent.orchestrator import Branch
+    o = ledger_state(tmp_path)
+    o.branches["speed2"] = Branch("speed2", ["speed"], "Speed lens, pivot from H1", "speed")
+    o.pivot(o.hyps[2])
+    assert "speed3" not in o.branches and not of(o, "branch_created")
+    assert of(o, "agent_log")[-1]["text"].startswith("speed2 is already open on the Speed lens, so it continues the pivot from H2")
+    o.branches["speed"].status = "rejected"
+    assert o.successor(o.branches["speed"]).id == "speed2"
+    o.branches["speed2"].status = "rejected"
+    o.pivot(o.hyps[2])
+    assert "speed3" in o.branches  # nothing open on the lens, so the pivot forks

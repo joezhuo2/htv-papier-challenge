@@ -745,6 +745,12 @@ class Orchestrator:
         if b.lens == "both" or sum(x.lens == b.lens for x in self.branches.values()) >= MAX_PER_LENS:
             return
         base = self.start_point(b.id)[0]
+        # one open branch per lens family: an open branch of the lens takes the pivot instead of a duplicate fork
+        open_ = [x for x in self.branches.values() if x.lens == b.lens and x.id != b.id and x.status in ("running", "waiting_on_human")]
+        if open_:
+            self.log.emit("agent_log", text=f"{open_[-1].id} is already open on the {b.lens.capitalize()} lens, so it continues the pivot from {h.id} "
+                                            f"(drop {ruled_out(h.params, base)}) instead of a new branch.")
+            return
         dropped = pivot_keys(h.params, base)
         new = self.fork(b.id, b.lens, f"{'Speed' if b.lens == 'speed' else 'Precision'} lens, pivot from {h.id}",
                         f"Pivot from the {h.id} post-mortem: drop {ruled_out(h.params, base)} and keep the rest.")
@@ -863,9 +869,11 @@ class Orchestrator:
         return any(open_help(x) for x in self.helps.values()) or bool(self.hybrid and self.hybrid["state"] == "proposed")
 
     def successor(self, b):
-        """The open branch that continues a rejected one: its pivot, the newest open child on the same lens."""
-        kids = [x for x in self.branches.values() if b.id in x.parents and x.lens == b.lens and x.status in ("running", "waiting_on_human")]
-        return kids[-1] if kids else None
+        """The open branch that continues a rejected one: its pivot (the newest open child on the same lens), or the open branch of the
+        lens that took the pivot instead of a duplicate fork."""
+        same = [x for x in self.branches.values() if x.lens == b.lens and x.id != b.id and x.status in ("running", "waiting_on_human")]
+        kids = [x for x in same if b.id in x.parents]
+        return (kids or same or [None])[-1]
 
     def live(self, bid):
         """The branch a help answer applies to: the branch itself, or its successor once it was rejected. None when nothing continues it."""
