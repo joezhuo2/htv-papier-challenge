@@ -2,7 +2,7 @@
 
 A solo build for Hack the Valley 11, entered in the Papiers Autoresearch Challenge. An autonomous agent tunes a fused matmul + bias + GELU Triton kernel under two competing lenses, Speed and Precision. One person switches between the two lens tabs in a web UI, and in a real team these would be two people. The agent states a falsifiable prediction before every run, the verdict is computed in code from measured metrics (never by the LLM), it rejects its own failed hypotheses with a post-mortem, and it asks the relevant lens owner for help while it keeps exploring other branches.
 
-`war-room-plan.md` is the full spec, `decisions.md` records decisions that override it, and `status.md` tracks progress.
+`war-room-plan.md` is the full spec, `decisions.md` records decisions that override it, and `docs/status.md` tracks progress.
 
 ## Status
 

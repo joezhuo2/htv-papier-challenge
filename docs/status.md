@@ -1,4 +1,28 @@
-# Status and next steps
+# Running log (overnight, Saturday Oct 17)
+
+Read this first at 7:30. Newest entries first in each list.
+
+## Done
+- 04:35 Polish list started in the UI: chapters (jump plus auto-pause), plain-language hover definitions, mode pill with the replay compression note, final result screen, clean first load and page title, live pre-flight panel (GPU, Gemini, NIM, Papiers checked for real by GET /preflight), visible timeout state with Retry and Stop, Save as replay, noise band (same-window speedups with +/- spread on cards, run details and chart error bars), judging build (`npm run build:judging`, mock hidden, falls back to /runs/demo.jsonl), replay log schema validation with line-numbered errors. Tests: 84 vitest, 50 pytest.
+- 04:30 Golden test: tests/test_golden.py drives a fixed fake session and pins its event types and payload keys to tests/fixtures/golden_session.jsonl; src/ui/test/golden.test.ts checks that fixture passes UI log validation, folds to a finished session, and uses the same keys as the mock for every shared event type.
+- 04:25 Live controls in the agent and server: the session waits for a Start command (AUTOSTART=1 skips it), LLM failures emit agent_error and wait for Retry or retry by themselves after 30 s, harness timeouts show as "timed out", Stop finishes the session, MAX_HYPS caps a live run (default 1), directives are rate limited (one per lens per 10 s, at most 6).
+- 04:20 Gemini is the default model provider (gemini-3.5-flash-lite for hypotheses, gemini-3.8-flash for prose, reasoning_effort low), NIM is the per-call fallback and each fallback is logged. Key verified: models endpoint 200, test calls 1.8 s and 2.7 s.
+- 04:20 Step 3 verified on the GPU: FP16 standard error 1.318e-2 on three runs (34% margin under 2e-2), provisional under Speed three times, then rejected under 1e-3 by the Precision directive with no run_started between the directive and the flip, post-mortem with a 5 point K sweep all over the bound.
+- 04:18 Step 1 timing rework measured (runs/stability.log): every candidate is timed in one child process interleaved with naive, eager and its parent best over 7 rounds. Across 10 separate processes the speedups now vary by 0.7 to 0.9% (CV), versus 1.28x to 2.36x for the same comparison before. Verdicts use max(calibrated band, this run's within-window half-range, about 4%) as the noise, which is conservative.
+- 04:17 Step 2 batch report (behavior only, numbers provisional, no replay taken from it): night1 and night2 ran the older code with NIM, night3 the interleaved timing with Gemini. The agent proposed FP16 itself once (night2, on main before any directive, rejected at the strict default). Every session needed the seeded FP16 variant on the Speed branch; it flipped provisional then rejected only in night3, the misses in night1 and night2 came from the old cross-process speed check. No implausible predictions (1.02 to 1.5x vs best, 3.5x vs naive). Every papiers_context event carries the real query, note id (cnv_...) and a 240 character excerpt, and the Precision query's empty result is logged as no matching notes. Help requests fired in night2 and night3, exports were written in all three.
+- 04:05 Moved this file to docs/status.md.
+
+## Pending
+- Polish list, remaining: repo cleanup (lint setup for TypeScript and Python, dead code), Devpost screenshots (need the final real recording, not the overnight logs).
+- A real recorded session for the demo replay: run with the interleaved timing and Gemini, copy its events.jsonl to runs/demo.jsonl (the judging build and the live fallback both point there).
+- Live rehearsal with the UI against the server (pre-flight, Start, answer a help request, Stop, Save as replay).
+
+## Key numbers (interleaved timing, 10 runs each)
+- Best FP32 tiles (128x128x32, 4 warps, 3 stages): 2.75x vs naive (2.70 to 2.78), 1.03x vs eager (1.02 to 1.04).
+- FP16 accumulation, same tiles: 4.03x vs naive, 1.52x vs eager, 1.48x vs the FP32 tiles (1.47 to 1.51), standard error 1.318e-2, adversarial 7.08e-2.
+- Within-run spread about +/- 4%, across-run variation under 1%.
+
+# Status and next steps (written 04:00)
 
 As of Saturday Oct 17, about 4:00am ET. Update this file as work lands.
 
