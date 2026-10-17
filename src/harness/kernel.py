@@ -8,6 +8,8 @@ ACC = ("fp32", "fp16")
 GELU = ("exact", "approx")
 GROUP_M = 8
 SMEM_LIMIT = 101376  # bytes of shared memory per block on the RTX 5060 (Triton's reported hardware limit)
+# accumulator elements per thread that still leave registers for the operands (255 per thread), FP16 packs two per register
+ACC_LIMIT = {"fp32": 128, "fp16": 256}
 
 
 def smem_bytes(p):

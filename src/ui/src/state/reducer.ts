@@ -163,8 +163,9 @@ export function reduce(prev: View, a: Action): View {
     case 'run_finished': {
       const assumption = v.helps.some(h => h.expired && !h.answer && h.help.blocks === e.run.branch)
       // the agent sends null latency for a run that failed to compile or timed out
-      const failed = e.run.metrics.latency_ms == null
-      const done = { params: e.run.params, metrics: failed ? undefined : e.run.metrics, finished: e.t, assumption, failed, error: e.error }
+      const m = e.run.metrics
+      const failed = m.latency_ms === null
+      const done = { params: e.run.params, metrics: m.latency_ms === null ? undefined : m, finished: e.t, assumption, failed, error: e.error }
       const known = v.runs.some(r => r.id === e.run.id)
       const runs = known
         ? v.runs.map(r => (r.id === e.run.id ? { ...r, ...done } : r))
@@ -184,7 +185,10 @@ export function reduce(prev: View, a: Action): View {
     case 'post_mortem':
       return { ...v, postMortems: [...v.postMortems, e.post_mortem] }
     case 'summary': {
-      const run = [...v.runs].reverse().find(r => r.branch === e.summary.branch && r.finished !== undefined)
+      // older logs carry no hypothesis id, so they fall back to the newest finished run on the branch
+      const run = e.summary.hypothesis
+        ? v.runs.find(r => r.hypothesis === e.summary.hypothesis)
+        : [...v.runs].reverse().find(r => r.branch === e.summary.branch && r.finished !== undefined)
       const verdict = run && v.verdicts[run.hypothesis]
       return { ...v, feed: [...v.feed, { kind: 'summary', summary: e.summary, run: run?.id, hypothesis: run?.hypothesis, verdict, t: e.t, mock }] }
     }

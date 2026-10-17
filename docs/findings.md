@@ -52,6 +52,8 @@ gpt-oss reaches for FP16 accumulation by itself, gemma repeats one safe edit and
 | night3 | interleaved timing, Gemini | no | provisional, then rejected by Precision | yes | |
 | candidate1 (05:00) | final code | no | 1.54x +/- 0.12x over FP32 parent, provisional, then rejected 3.6 s later | yes | best confirmed result only r1 (2.78x vs naive, 0.90x vs eager), two help requests timed out to defaults, two shared-memory compile failures |
 
+| fallback1 (16:00) | before the 16:30 fixes, hand played | no | 1.51x +/- 0.03x over FP32 parent, provisional, then rejected at the Precision directive | yes | model tried approximate GELU three times (all inconclusive), H6 spilled at 0.10x, best confirmed 2.65x vs naive and 0.97x vs eager |
+
 Across all sessions: predictions stayed in range after the fix, every papiers_context carries the real query, note id and excerpt, and the Precision directive's query returns no Papiers notes (logged as no matching notes). Screenshots of candidate1 are in docs/screenshots.
 
 ## Observations worth knowing

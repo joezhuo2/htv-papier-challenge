@@ -13,14 +13,14 @@ Project: Multi-POV Research War Room. Solo build by Joe for Hack the Valley 11, 
 - **Failure by design:** FP16 accumulation is about 1.45x faster than the best FP32 tiles on this GPU but has standard error 1.3e-2 and adversarial error 7.1e-2 (fixed seed, identical every run). Under the Speed tolerance it is provisionally confirmed, and the Precision directive flips it to rejected, with a post-mortem and an error-vs-K sweep (1.9e-2 at K=256 up to 8.1e-2 at K=4096). If the agent does not propose FP16 itself, the harness adds it as a disclosed variant (plan Section 9), and the pitch says so: a seeded stretch hypothesis the agent tested, explained and judged in code.
 - **Help requests:** routed to the relevant lens owner (badge on that tab). While blocked, the agent keeps exploring other branches. After the deadline it proceeds on a flagged default assumption.
 - **Roles:** Joe plays both lenses by switching tabs. Say so in the pitch.
-- **LLM:** NVIDIA NIM, OpenAI compatible API, key in `NVIDIA_API_KEY` in a gitignored `.env`. Fast model `nvidia/nemotron-3.5-lightning-30b-a3b`, stronger model `deepseek-ai/deepseek-v4.1-flash` (may be very slow). Final split decided by the model benchmark, which includes faster NIM fallback models.
+- **LLM:** originally NVIDIA NIM with Nemotron and DeepSeek. After the model benchmark (both were too slow), hypotheses go to OmniRoute, then `gemini-3.5-flash-lite`, then NIM `openai/gpt-oss-20b`, and post-mortem prose to `gemini-3.8-flash` with a factual fallback. Keys in a gitignored `.env`. See `CLAUDE.md` and `docs/results.md`.
 - **Stack:** FastAPI backend with WebSocket, React (Vite) front end, layout `src/{harness,agent,server,ui}`, `runs/` gitignored, `tests/`.
 - **Testing:** pytest and vitest. Markers `gpu` and `papiers` skipped by default. Golden test compares orchestrator events to a JSON export of `src/contract/demo-script.ts`. Per phase prompts are in `test-prompts.md`.
 - **Repo rules:** never commit or push unless Joe says so, no em dashes, minimal comments, concise names, no defensive boilerplate. Ask before assuming.
 
 ## Contract (src/contract)
 
-`types.ts` defines state objects, `DemoEvent` and `Command`. `demo-script.ts` is a 66 event, 3 minute mock (flagged `mock: true`) with hypotheses H0 to H5: H0 tuned tiles confirmed, H1 FP16 accumulation provisional then rejected after the Precision directive, H2 inconclusive and triggers the help request, H3 safe pipeline confirmed, H4 approximate GELU confirmed after Joe's typed hunch, H5 hybrid confirmed. `replay.ts` replays events at `t / speed`. Presenter controls (pause, resume, step) are still to add.
+`types.ts` defines state objects, `DemoEvent` and `Command`. `demo-script.ts` is a 66 event, 3 minute mock (flagged `mock: true`) with hypotheses H0 to H5: H0 tuned tiles confirmed, H1 FP16 accumulation provisional then rejected after the Precision directive, H2 inconclusive and triggers the help request, H3 safe pipeline confirmed, H4 approximate GELU confirmed after Joe's typed hunch, H5 hybrid confirmed. The UI's player (`src/ui/src/player.ts`) replays events with idle gaps over 4 s compressed, with presenter controls (pause, step, step back, chapters, speed).
 
 ## Demo
 

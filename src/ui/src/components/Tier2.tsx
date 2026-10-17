@@ -78,12 +78,15 @@ export function Ledger({ view }: { view: View }) {
       </summary>
       {rows.length === 0 ? <p className="empty">No hypotheses yet.</p> : (
         <ol className="ledger-list">
-          {rows.map(r => (
+          {rows.map(r => {
+            // a re-judge under a new bound can repeat the same verdict, only a different earlier verdict is news
+            const was = r.history.slice(0, -1).filter(x => x !== r.verdict)
+            return (
             <li key={r.hypothesis}>
               <div className="row">
                 <span className="mono strong">{r.hypothesis}</span>
                 <VerdictChip verdict={r.verdict} provisional={r.provisional} />
-                {r.history.length > 1 ? <span className="small muted">was {r.history.slice(0, -1).join(', ')}</span> : null}
+                {was.length ? <span className="small muted">was {[...new Set(was)].join(', ')}</span> : null}
                 <span style={{ flex: 1 }} />
                 <span className="mono small muted">{r.branch}</span>
               </div>
@@ -91,7 +94,8 @@ export function Ledger({ view }: { view: View }) {
               <div className="small muted">{r.result ? `Measured ${r.result}` : 'Not run'}</div>
               {r.note ? <div className="small muted">Informed by <NoteChip view={view} id={r.note} /></div> : null}
             </li>
-          ))}
+            )
+          })}
         </ol>
       )}
     </details>

@@ -19,6 +19,7 @@ from agent.events import Log
 from agent.verdict import Judgment, judge, sci
 from harness.data import BOUND
 from harness.kernel import (
+    ACC_LIMIT,
     NAIVE,
     SMEM_LIMIT,
     Params,
@@ -38,8 +39,6 @@ MAX_PER_LENS = 3
 DIRECTIVE_GAP_S = 10.0
 MAX_DIRECTIVES = 6
 TILE = TILE_KEYS
-# FP32 accumulator elements per thread that still leave registers for the operands (255 per thread). FP16 packs two per register.
-ACC_LIMIT = {"fp32": 128, "fp16": 256}
 SLOW = 0.5  # a run below this speedup vs its parent gets a register post-mortem
 
 
@@ -76,6 +75,7 @@ class Hyp:
     bounds: list[dict] = field(default_factory=list)
     base: Params | None = None  # the config a harness variant is compared against, when it is not the branch best
     ref: str = "naive"  # which same-window reference the speedup was taken against
+    bonus: bool = False  # ran in a reserved slot (a presenter hunch or the approved hybrid), not counted against the cap
 
     def dict(self):
         d = {"id": self.id, "branch": self.branch, "claim": self.claim, "prediction": self.prediction, "params": self.params.dict()}
@@ -90,8 +90,12 @@ def bound_owner(bound):
     return {"speed": "Speed lens", "precision": "Precision lens"}.get(bound["set_by"], "default")
 
 
+def tiles_text(p: Params):
+    return f"{p.block_m}x{p.block_n}x{p.block_k} tiles, {p.warps} warps, {p.stages} stages"
+
+
 def params_text(p: Params):
-    return f"{p.block_m}x{p.block_n}x{p.block_k} tiles, {p.warps} warps, {p.stages} stages, {p.acc} accumulation, {p.gelu} GELU"
+    return f"{tiles_text(p)}, {p.acc.upper()} accumulation, {p.gelu} GELU"
 
 
 def facet(a: Params, b: Params):
@@ -116,9 +120,14 @@ def change(a: Params, b: Params):
     return ", ".join(diff) or "no parameter change"
 
 
+def setting(p: Params, k):
+    v = getattr(p, k)
+    return f"{v.upper()} accumulation" if k == "acc" else f"{v} GELU" if k == "gelu" else f"{k} {v}"
+
+
 def ruled_out(p: Params, base: Params):
     keys = [k for k in p.dict() if getattr(p, k) != getattr(base, k) and k in ("acc", "gelu")] or [k for k in p.dict() if getattr(p, k) != getattr(base, k)]
-    return ", ".join(f"{k}={getattr(p, k)}" for k in keys) or f"the configuration {p.dict()}"
+    return ", ".join(setting(p, k) for k in keys) or f"the configuration {params_text(p)}"
 
 
 def hybrid_guard(p: Params, area):
@@ -244,7 +253,7 @@ class Orchestrator:
         self.promises: list[dict] = []  # extra iterations a plan_change promised: {ref, branch, n, start}
         self.conflicts = 0
         self.hybrid: dict | None = None  # {branches, params, base, text, t, state: proposed, approved, expired, done}
-        self.bonus = 0  # hypotheses allowed past the cap, for a hybrid the presenter approved
+        self.reserved: set[str] = set()  # slots past the cap: directive ids of hunches still to test, and "hybrid" once approved
         self.lock = threading.RLock()
         self.gpu = threading.Lock()
         self.done = False
@@ -307,8 +316,22 @@ class Orchestrator:
         """Recording mode: the main branch stops after H0 so the session waits for a lens directive."""
         self.record, self.max_hyps, self.main_iters = True, max_hyps, 1
 
+    def base_capped(self):
+        return self.max_hyps is not None and sum(not h.bonus for h in self.hyps) >= self.max_hyps
+
+    def owed(self):
+        """Branches holding a reserved slot: a presenter hunch still to test, or the approved hybrid."""
+        out = {bid for bid, hint in self.hints.items() if hint[2] in self.reserved}
+        return out | ({"merge"} if "hybrid" in self.reserved else set())
+
     def capped(self):
-        return self.max_hyps is not None and len(self.hyps) >= self.max_hyps + self.bonus
+        return self.base_capped() and not any(self.branches[b].status in ("running", "waiting_on_human") for b in self.owed() if b in self.branches)
+
+    def spend(self, h, hint):
+        """Marks h as the hypothesis that used its hint's reserved slot, if the hint had one."""
+        if h and hint and hint[2] in self.reserved:
+            h.bonus = True
+            self.reserved.discard(hint[2])
 
     def run(self):
         with self.lock:
@@ -335,7 +358,7 @@ class Orchestrator:
                 if self.capped() and not self.pending():
                     break
                 if self.record:
-                    if self.capped():
+                    if self.base_capped():
                         idle = time.monotonic()
                     elif not self.waiting:
                         self.waiting = True
@@ -389,12 +412,15 @@ class Orchestrator:
             self.export([("ledger", f"Hypothesis ledger {self.hyps[0].id} to {self.hyps[-1].id}", "ledger.md",
                           ex.ledger_md(self.hyps, out if best else None, self.naive.latency_ms, self.eager.latency_ms))]
                         + [("summary", f"Branch summary: {bid}", f"summary-{bid}.md", ex.summary_md(sm)) for bid, sm in self.summaries.items()])
-        if self.capped():
-            for pr in self.promises:
-                left = pr["n"] - (sum(h.branch == pr["branch"] for h in self.hyps) - pr["start"])
-                if left > 0:
-                    self.log.emit("plan_change", help=pr["ref"], text=f"The {self.max_hyps} hypothesis cap ended the session before {left} of the {pr['n']} "
-                                                                      f"iterations promised in {pr['ref']} ran on {pr['branch']}.")
+        for pr in self.promises:
+            left = pr["n"] - (sum(h.branch == pr["branch"] for h in self.hyps) - pr["start"])
+            if left <= 0:
+                continue
+            b = self.branches[pr["branch"]]
+            why = (f"{b.id} closed ({b.status})" if b.status not in ("running", "waiting_on_human")
+                   else f"The {self.max_hyps} hypothesis cap ended the session" if self.base_capped()
+                   else "The session was stopped" if self.stopped else "The session went idle")
+            self.log.emit("plan_change", help=pr["ref"], text=f"{why} before {left} of the {pr['n']} iterations promised in {pr['ref']} ran on {b.id}.")
         for b in self.branches.values():
             if b.status in ("running", "waiting_on_human"):
                 self.close(b, "done")
@@ -440,26 +466,35 @@ class Orchestrator:
         self.defaulted.clear()
         self.directives.append(d | {"at": now})
         self.log.emit("directive_added", directive=d)
-        if lens == "speed":
+        if lens == "speed" and any(x["lens"] == "precision" for x in self.directives):
+            self.log.emit("agent_log", text=f"Speed lens directive recorded. The Precision bound of {sci(self.bounds('speed')['standard'])} on the standard and "
+                                            f"adversarial batches still applies to every branch, so the Speed tolerance of {sci(d['threshold'])} does not loosen it.")
+        elif lens == "speed":
             self.log.emit("agent_log", text=f"Speed lens bound assigned: max error under {sci(d['threshold'])} on the standard batch for Speed branches "
                                             f"(default {sci(hyp.SPEED_TOLERANCE)}, ceiling {sci(hyp.SPEED_CEILING)}).")
-        if lens == "precision":
+        else:
             self.log.emit("agent_log", text=f"Precision bound assigned: {sci(d['threshold'])} on the standard and adversarial batches for every branch. "
                                             "Re-evaluating logged runs, no new runs needed.")
-            self.reevaluate(d)
+        delta = hyp.hunch_change(text)
+        name = "Speed" if lens == "speed" else "Precision"
         open_ = [b for b in self.branches.values() if b.lens == lens and b.status in ("running", "waiting_on_human")]
         if open_:
             target = open_[-1]
+        elif self.stopped or (delta is None and self.base_capped()):
+            # nothing would run on a new branch, so none is opened; a Precision bound still re-judges the logged runs below
+            why = "the session was stopped" if self.stopped else f"the session reached its {self.max_hyps} hypothesis cap"
+            self.log.emit("plan_change", help=d["id"], text=f"No new {name} branch for {d['id']} because {why}"
+                                                           + (". Its bound applies to the logged runs." if lens == "precision" else "."))
+            target = None
         else:
             parent = self.best_run()
-            pid = parent.branch if parent else "main"
-            reason = f"{'Speed' if lens == 'speed' else 'Precision'} lens directive {d['id']}: {text}"
-            target = self.fork(pid, lens, f"{'Speed' if lens == 'speed' else 'Precision'} lens", reason)
-        delta = hyp.hunch_change(text)
-        if delta is None:
+            target = self.fork(parent.branch if parent else "main", lens, f"{name} lens", f"{name} lens directive {d['id']}: {text}")
+        if target and delta is None:
             self.bound_only(target, d)
-        else:
+        elif target:
             self.hunch(target, text, f"Hunch from the {lens.capitalize()} lens in directive {d['id']}", d["id"], lens, delta)
+        if lens == "precision":
+            self.reevaluate(d)
 
     def bound_only(self, b, d):
         """A directive that names no concrete change is a constraint: the next hypothesis is attributed to its bound, not called a hunch."""
@@ -486,12 +521,13 @@ class Orchestrator:
                 "so this is a retest on the current best tiles.")
 
     def hunch(self, b, text, cite, ref, lens, delta):
-        """A typed hunch is the next hypothesis on its branch, or gets a plan_change saying why not. Never dropped silently."""
-        if self.capped() or self.stopped:
-            why = f"the session reached its {self.max_hyps} hypothesis cap" if self.capped() else "the session was stopped"
-            self.log.emit("plan_change", help=ref, text=f"Not testing \"{text[:120]}\" because {why}.")
+        """A typed hunch is the next hypothesis on its branch, in a reserved slot that the cap does not count, or gets a plan_change
+        saying why not. Never dropped silently."""
+        if self.stopped:
+            self.log.emit("plan_change", help=ref, text=f"Not testing \"{text[:120]}\" because the session was stopped.")
             return
         self.hints[b.id] = (text, cite, ref, delta)
+        self.reserved.add(ref)
         when = "next" if b.status == "running" else f"as soon as {b.id} resumes"
         bound = self.bounds(b.lens)
         self.log.emit("plan_change", help=ref, text=f"Because the {lens.capitalize()} lens sent \"{text[:120]}\", I am testing it {when} on {b.id}, "
@@ -512,27 +548,30 @@ class Orchestrator:
                 self.hints[others[-1].id] = hint
                 self.log.emit("plan_change", help=ref, text=f"{bid} closed ({b.status}) before testing \"{text[:120]}\", so I am testing it next on {others[-1].id}.")
             else:
+                self.reserved.discard(ref)
                 self.log.emit("plan_change", help=ref, text=f"{bid} closed ({b.status}) before testing \"{text[:120]}\" and no other {b.lens} branch is open. "
                                                             "Send it again as a directive to open one.")
 
     def reevaluate(self, d):
+        """Re-judges every measured run under the bound now active on its branch, so each verdict shows the bound in force. A run that
+        flips from confirmed to rejected rejects its branch, with a post-mortem and a pivot fork."""
         speed = [x["id"] for x in self.directives if x["lens"] == "speed"]
         for h in self.hyps:
             j = h.judgment
-            if not (j and j.verdict == "confirmed" and j.provisional):
+            bound = self.bounds(self.branches[h.branch].lens)
+            if not (j and h.metrics.latency_ms) or h.bounds[-1] == bound:
                 continue
-            bound = {"standard": d["threshold"], "adversarial": d["threshold"], "set_by": "precision"}
-            new = judge(h.prediction, h.metrics, h.speedup, h.noise, d["threshold"], d["threshold"])
-            if new.verdict == j.verdict and new.provisional == j.provisional:
-                continue
+            new = judge(h.prediction, h.metrics, h.speedup, h.noise, bound["standard"], bound["adversarial"])
             self.set_verdict(h, new, bound)
-            if new.verdict == "rejected":
+            if j.verdict == "confirmed" and new.verdict == "rejected":
                 self.branches[h.branch].status = "rejected"
                 self.log.emit("branch_status", branch=h.branch, status="rejected")
                 if speed:
                     self.conflicts += 1
+                    batches = [c.name.split()[0] for c in new.checks if c.passed is False and "error" in c.name]
                     self.log.emit("conflict_detected", directives=speed + [d["id"]],
-                                  reason=f"The best candidate for the Speed directive ({h.id}) violates the Precision bound on the adversarial batch. Forking instead of overwriting either directive.")
+                                  reason=f"The best candidate for the Speed directive ({h.id}) violates the Precision bound on the {' and '.join(batches)} "
+                                         f"batch{'es' if len(batches) > 1 else ''}. Forking instead of overwriting either directive.")
                 self.post_mortem(h)
                 self.summarize(h, self.branches[h.branch], f"Fork: keep what worked in {h.id} and drop {ruled_out(h.params, self.start_point(h.branch)[0])}.")
                 self.export_failure(h, self.branches[h.branch])
@@ -561,6 +600,8 @@ class Orchestrator:
         if self.capped() or self.stopped:
             return None
         live = [b for b in self.branches.values() if b.status == "running"]
+        if self.base_capped():
+            live = [b for b in live if b.id in self.owed()]
         return min(live, key=lambda b: b.iters) if live else None
 
     def lineage(self, bid):
@@ -637,7 +678,8 @@ class Orchestrator:
             self.request_help(h, b, target)
             return
         budget = (b.budget or (self.main_iters if b.id == "main" else self.branch_iters)) + self.extra.get(b.id, 0)
-        done = b.iters >= budget or b.misses >= 2
+        # two misses in a row end a branch, unless a lens owner was promised more iterations on it
+        done = b.iters >= budget or (b.misses >= 2 and not self.promised(b.id))
         if v == "rejected":
             nxt = ("Stop this branch and wait for a lens directive." if done
                    else f"Try a different change on this branch, avoiding what the {h.id} post-mortem ruled out." if h.id in self.pms
@@ -759,6 +801,10 @@ class Orchestrator:
                                                         "Results on this branch are flagged assumption pending until an answer arrives.")
             self.reopen(b)
 
+    def promised(self, bid):
+        """Iterations a plan_change promised on this branch that have not run yet."""
+        return sum(max(0, pr["n"] - (sum(h.branch == bid for h in self.hyps) - pr["start"])) for pr in self.promises if pr["branch"] == bid)
+
     def promise(self, ref, b, n):
         self.extra[b.id] = self.extra.get(b.id, 0) + n
         self.promises.append({"ref": ref, "branch": b.id, "n": n, "start": sum(h.branch == b.id for h in self.hyps)})
@@ -851,7 +897,7 @@ class Orchestrator:
         if b.id == "merge" and self.hybrid and self.hybrid["state"] == "approved":
             return self.hybrid_hyp(b)
         # the seeded FP16 variant is the first Speed lens hypothesis, ahead of a pending hunch
-        seed = self.seed(b, tried_all)
+        seed = None if self.base_capped() else self.seed(b, tried_all)
         if seed:
             if b.id in self.hints and self.hints[b.id][3] is not None:
                 self.log.emit("plan_change", help=self.hints[b.id][2], text=f"The scheduled FP16 variant runs first on {b.id}, "
@@ -861,7 +907,9 @@ class Orchestrator:
         if hint and hint[3] and self.tested(hint[3]):
             retest = self.retest(b, start, hint, tried_all)
             if retest:
+                self.spend(retest, hint)
                 return retest
+            self.reserved.discard(hint[2])
             hint = None
 
         tried = [{"params": h.params.dict(), "verdict": h.judgment.verdict, "metrics": h.metrics.contract()}
@@ -889,12 +937,15 @@ class Orchestrator:
                     claim = claim_text(start, h["params"], h["prediction"], self.bounds(b.lens))
                     cite = f"{cite}. {h['adjusted']}" if cite else h["adjusted"]
                 new = self.new_hyp(b, claim, h["prediction"], h["params"], cite)
+                self.spend(new, hint)
                 if hint and hint[3] is not None and first:
                     self.log.emit("plan_change", help=hint[2], text=f"My first reading of \"{hint[0][:120]}\" was not testable ({first}), so {new.id} tests "
                                                                     f"the closest valid version: {change(start, new.params)}.")
                 return new
             first = first or why
             messages = messages + [{"role": "assistant", "content": text}, {"role": "user", "content": f"Invalid: {why}. Reply again with only the JSON object."}]
+        if hint:
+            self.reserved.discard(hint[2])
         if hint and hint[3] is not None:
             self.log.emit("plan_change", help=hint[2], text=f"I could not turn \"{hint[0][:120]}\" into a valid configuration on {b.id} ({why}), so it is not tested.")
         self.log.emit("agent_log", text=f"No valid hypothesis for branch {b.id} after 3 attempts ({why}). Closing the branch.")
@@ -908,13 +959,16 @@ class Orchestrator:
         except ValueError as err:
             self.log.emit("plan_change", help=hint[2], text=f"\"{hint[0][:120]}\" names an invalid value ({err}), so it is not retested.")
             return None
+        if acc_per_thread(p) > ACC_LIMIT[p.acc]:
+            self.log.emit("plan_change", help=hint[2], text=f"\"{hint[0][:120]}\" on {b.id}'s current best gives {params_text(p)}, which puts {acc_per_thread(p)} "
+                                                           f"accumulator elements on each thread, over the {ACC_LIMIT[p.acc]} register limit, so it is not retested.")
+            return None
         if p == start or json.dumps(p.dict(), sort_keys=True) in tried_all:
             self.log.emit("plan_change", help=hint[2], text=f"{b.id}'s current best already has {ruled_out(p, self.prior(e)[0])} or that exact config was run, "
                                                            f"so \"{hint[0][:120]}\" is not retested. The earlier result is {e.id} ({e.judgment.verdict}).")
             return None
         bound = self.bounds(b.lens)
-        tiles = f"{start.block_m}x{start.block_n}x{start.block_k} tiles, {start.warps} warps, {start.stages} stages"
-        claim = (f"Retest of {e.id}: {change(start, p)} on the current best {tiles} is at least 1.02x faster than the same config without it, "
+        claim = (f"Retest of {e.id}: {change(start, p)} on the current best {tiles_text(start)} is at least 1.02x faster than the same config without it, "
                  f"with standard max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound.")
         h = self.new_hyp(b, claim, {"min_speedup": 1.02, "vs": "parent_best", "max_error": bound["standard"]}, p,
                          f"{hint[1]}, a retest of {e.id} on the current best tiles")
@@ -947,7 +1001,7 @@ class Orchestrator:
         if json.dumps(p.dict(), sort_keys=True) in tried_all:
             return None
         bound = self.bounds(b.lens)
-        claim = (f"FP16 accumulation on {params_text(p)} cuts latency by at least 1.20x against the same config with FP32 accumulation, "
+        claim = (f"FP16 accumulation on {tiles_text(p)} with {p.gelu} GELU cuts latency by at least 1.20x against the same config with FP32 accumulation, "
                  f"with standard max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound.")
         h = self.new_hyp(b, claim, {"min_speedup": 1.2, "vs": "parent_best", "max_error": bound["standard"]}, p,
                          "Harness-seeded variant, not proposed by the model: low-precision accumulation tested under the active Speed bound.")
@@ -975,20 +1029,20 @@ class Orchestrator:
         union = Params(**{k: getattr(pb.params, k) if getattr(pb.params, k) != getattr(base, k) else getattr(sb.params, k) for k in base.dict()})
         faster, slower = sorted((pb, sb), key=lambda h: h.metrics.latency_ms)
         area = max(x.params.block_m * x.params.block_n for x in (pb, sb))
-        tried = {json.dumps(h.params.dict(), sort_keys=True) for h in self.hyps}
         rejects = []
         for src in (None, faster, slower):
             p = fit_stages(union if src is None else replace(union, **{k: getattr(src.params, k) for k in TILE}))
-            why = hybrid_guard(p, area)
-            if why and src is None:
-                rejects.append(f"The full union, {params_text(p)}, {why}")
-            if not why and p not in (pb.params, sb.params) and json.dumps(p.dict(), sort_keys=True) not in tried:
+            same = next((x for x in (pb, sb) if x.params == p), None)
+            ran = next((x for x in self.hyps if x.params == p), None)
+            why = hybrid_guard(p, area) or (f"is {same.id}'s own configuration" if same else f"was already run as {ran.id}" if ran else None)
+            if not why:
                 break
+            rejects.append(f"The full union, {params_text(p)}, {why}" if src is None else f"The tile shape of {src.branch} ({src.id}) gives {params_text(p)}, which {why}")
         else:
             return
         keep = f" Keeping the tile shape of {src.branch} ({src.id}) instead." if src else ""
         text = (f"Combine {change(base, sb.params)} from {sb.branch} ({sb.id}) with {change(base, pb.params)} from {pb.branch} ({pb.id}). "
-                + (f"{rejects[0]}.{keep} " if rejects else "")
+                + (f"{'. '.join(rejects)}.{keep} " if rejects else "")
                 + f"Candidate: {params_text(p)}, {acc_per_thread(p)} accumulator elements per thread. "
                 "The expected gain is small, so the result shows whether the two lenses' changes add up.")
         self.hybrid = {"branches": [pb.branch, sb.branch], "params": p, "base": faster.params, "faster": faster, "text": text,
@@ -1001,7 +1055,7 @@ class Orchestrator:
             self.note(f"ignored approve_hybrid {branches}: no matching open proposal")
             return
         x["state"] = "approved"
-        self.bonus += 1
+        self.reserved.add("hybrid")
         b = Branch("merge", list(x["branches"]), "Hybrid", "both", budget=1)
         self.branches[b.id] = b
         self.log.emit("branch_created", branch=b.dict(), reason=f"Hybrid approved: {change(x['base'], x['params'])}.")
@@ -1016,6 +1070,8 @@ class Orchestrator:
         h = self.new_hyp(b, claim, {"min_speedup": 1.02, "vs": "parent_best", "max_error": bound["standard"]}, x["params"],
                          f"Hybrid of {x['branches'][0]} and {x['branches'][1]}, approved by the presenter.")
         h.base = x["base"]
+        h.bonus = True
+        self.reserved.discard("hybrid")
         return h
 
     def papiers(self, query):
@@ -1170,7 +1226,7 @@ class Orchestrator:
     def summarize(self, h: Hyp, b: Branch, next_step: str):
         """Every field is computed from the verdict, its checks and the run's measured spread, so it cannot contradict them."""
         m = h.metrics
-        before_p, before = self.prior(h)
+        before_p, before = self.baseline(h)
         j = h.judgment
         moved = [] if m.latency_ms is None else [
             {"metric": "latency", "before": before.latency_ms, "after": m.latency_ms, "unit": "ms"},
@@ -1184,6 +1240,7 @@ class Orchestrator:
         confidence, reason, unsure, mind = assess(h)
         summary = {
             "branch": b.id,
+            "hypothesis": h.id,
             "tried": f"{h.claim} ({change(before_p, h.params)})",
             "moved": moved,
             "verdict": verdict,
@@ -1196,6 +1253,11 @@ class Orchestrator:
         self.summaries[b.id] = summary
         self.summarized.add(h.id)
         self.log.emit("summary", summary=summary)
+
+    def baseline(self, h: Hyp):
+        """What h was timed against: its harness base when it has one (the seed, a retest, the hybrid), otherwise the branch best before it."""
+        x = h.base and next((x for x in self.hyps if x is not h and x.params == h.base and x.metrics and x.metrics.latency_ms), None)
+        return (x.params, x.metrics) if x else self.prior(h)
 
     def prior(self, h: Hyp):
         """The configuration this hypothesis started from, excluding itself."""

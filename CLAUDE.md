@@ -40,10 +40,11 @@ tests/
 
 ## LLM
 
-NVIDIA NIM through its OpenAI compatible API. Verify the base URL against the NVIDIA docs before relying on it. The key lives in `NVIDIA_API_KEY` in a gitignored `.env`, never hardcode or print it. Model IDs are configurable via env with these defaults:
+OpenAI compatible APIs, keys in a gitignored `.env` (`GEMINI_API_KEY`, `NVIDIA_API_KEY`), never hardcode or print them. The original plan was NIM with Nemotron and DeepSeek; the model benchmark and Saturday's changes replaced that (details in `docs/results.md` and `docs/architecture.md`). Current routing, all configurable via env:
 
-- Fast model for hypotheses and kernel edits: `nvidia/nemotron-3.5-lightning-30b-a3b`
-- Stronger model for post-mortems, summaries, and the final report: `deepseek-ai/deepseek-v4.1-flash` (may be very slow, use generous timeouts, stream where possible, and cache responses during rehearsals)
+- Hypotheses: a local OmniRoute gateway first (`OMNIROUTE_URL`, `OMNIROUTE_MODEL` default `auto/coding`, off with `OMNIROUTE=0`), then `gemini-3.5-flash-lite` (`GEMINI_FAST_MODEL`), then NIM `openai/gpt-oss-20b` (`FAST_MODEL`).
+- Post-mortem prose: `gemini-3.8-flash` (`GEMINI_STRONG_MODEL`) with a 15 s timeout and a factual template as fallback, NIM `google/gemma-4-31b-it` (`STRONG_MODEL`) only without a Gemini key.
+- Summaries and verdicts use no model, they are computed in code. Responses are cached in `runs/llm_cache/`.
 
 ## Invariants that must not be broken
 
@@ -53,4 +54,4 @@ NVIDIA NIM through its OpenAI compatible API. Verify the base URL against the NV
 - Inputs are scaled so outputs are O(1), and error is measured against an FP32 reference. If the baseline cannot meet the bound, tell me and propose relative error instead of loosening the threshold silently.
 - Every metric shown in the UI, the video, or the writeup comes from a real logged run. Nothing is hardcoded for the demo.
 - The failure path (an aggressive low-precision hypothesis that the agent itself rejects with a post-mortem) must be reproducible.
-- Papiers is used for reading notes before hypotheses and writing findings back. Read the docs at papiers.ai/docs for the actual CLI commands, and tell me what you find before wiring it in. Keep a local log as the source of truth.
+- Papiers is used for reading notes before hypotheses. Its CLI is read-only, so findings are exported as Markdown files for manual import (see `decisions.md`). Keep a local log as the source of truth.

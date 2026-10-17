@@ -16,7 +16,7 @@ Start with `status.md` (running log, what is done, what is pending, key numbers)
 
 ## Working rules for anyone continuing this
 
-- Commit and push to main after each significant change. Check `git status` before each push and never commit `.env`, `runs/` or keys.
+- Commit and push only when Joe says so in that message (the standing rule in `CLAUDE.md`). Check `git status` before each push and never commit `.env`, `runs/` or keys.
 - No em dashes anywhere, paragraphs as continuous lines, minimal comments, concise names, no defensive boilerplate.
 - Use Node 22 (`nvm use 22`) for anything in `src/ui` and for the Papiers CLI.
 - Do not run tests or builds while a GPU session, the overnight batch or a timing measurement is running.

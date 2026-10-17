@@ -28,6 +28,10 @@ export interface Metrics {
   n_spills?: number
 }
 
+// a run that failed to compile, crashed or timed out sends null for every measured field
+export type FailedMetrics = { [K in 'latency_ms' | 'tflops' | 'max_error' | 'adv_error' | 'vram_mb']: null } &
+  Pick<Metrics, 'compiled_ok' | 'correct_ok' | 'n_regs' | 'n_spills'>
+
 export interface Branch {
   id: string
   parents: string[]
@@ -113,6 +117,7 @@ export interface Delta {
 
 export interface Summary {
   branch: string
+  hypothesis?: string // the hypothesis this summary is about, absent in logs from before 16:30
   tried: string
   moved: Delta[]
   verdict: string
@@ -170,7 +175,7 @@ export type DemoEvent =
   | Ev<'branch_status', { branch: string; status: BranchStatus }>
   | Ev<'hypothesis_proposed', { hypothesis: Hypothesis }>
   | Ev<'run_started', { run: string; branch: string; hypothesis: string }>
-  | Ev<'run_finished', { run: Run; error?: string }> // error is set when the run failed to compile or hit the harness timeout
+  | Ev<'run_finished', { run: Omit<Run, 'metrics'> & { metrics: Metrics | FailedMetrics }; error?: string }> // error is set when the run failed to compile or hit the harness timeout
   | Ev<'verdict', { hypothesis: string; verdict: Verdict; provisional: boolean; reason: string; checks: Check[]; bound: Bound }>
   | Ev<'post_mortem', { post_mortem: PostMortem }>
   | Ev<'summary', { summary: Summary }>

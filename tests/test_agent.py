@@ -103,7 +103,7 @@ REQUIRED = {
     "hybrid_proposed": {"branches", "text"},
 }
 HELP_KEYS = {"id", "target", "question", "evidence", "options", "default", "blocks", "deadline_s", "what_changes"}
-SUMMARY_KEYS = {"branch", "tried", "moved", "verdict", "confidence", "confidence_reason", "uncertainties", "would_change_mind", "next_step"}
+SUMMARY_KEYS = {"branch", "hypothesis", "tried", "moved", "verdict", "confidence", "confidence_reason", "uncertainties", "would_change_mind", "next_step"}
 
 
 def assert_contract(events):
@@ -241,12 +241,15 @@ def test_failure_path_fp16_provisional_under_speed_then_rejected_by_precision(tm
     assert h1[0]["checks"][1] == {"name": "standard max error", "predicted": "< 2.0e-2", "observed": "1.3e-2", "pass": True}
     assert [c["pass"] for c in h1[1]["checks"]] == [True, False, False]
     assert of(o, "conflict_detected")[0]["directives"] == ["d1", "d2"]
+    assert "on the standard and adversarial batches" in of(o, "conflict_detected")[0]["reason"]
+    assert [e["bound"]["set_by"] for e in of(o, "verdict") if e["hypothesis"] == "H0"] == ["default", "precision"]  # every run is re-judged
+    assert types(o).index("branch_created", types(o).index("directive_added", types(o).index("directive_added") + 1)) < types(o).index("conflict_detected")
     pm = of(o, "post_mortem")[0]["post_mortem"]
     assert pm["hypothesis"] == "H1" and [s["k"] for s in pm["sweep"]] == [256, 512, 1024, 2048, 4096]
-    assert "acc=fp16" in pm["pivot"]
+    assert "Drop FP16 accumulation" in pm["pivot"]
     assert ("speed", "rejected") in [(e["branch"], e["status"]) for e in of(o, "branch_status")]
     pivot_prompt = next(m for model, tag, m in o.ask.calls if tag.startswith("speed2-"))
-    assert "acc=fp16" in pivot_prompt[1]["content"] and "under 1e-03" in pivot_prompt[1]["content"]
+    assert "FP16 accumulation (H1 rejected" in pivot_prompt[1]["content"] and "under 1e-03" in pivot_prompt[1]["content"]
     assert of(o, "session_finished")[0]["ledger"][1]["history"] == ["confirmed", "rejected"]
     assert_contract(o.log.events)
 
@@ -283,7 +286,7 @@ def test_harness_variant_tests_fp16_when_the_agent_avoids_it(tmp_path):
     variant = on_speed[0]
     assert variant["params"] == P | {"acc": "fp16"} and variant["note"].startswith("Harness-seeded variant, not proposed by the model")
     assert "Section" not in variant["note"]
-    assert variant["claim"] == ("FP16 accumulation on 128x128x32 tiles, 4 warps, 3 stages, fp16 accumulation, exact GELU cuts latency by at least 1.20x "
+    assert variant["claim"] == ("FP16 accumulation on 128x128x32 tiles, 4 warps, 3 stages with exact GELU cuts latency by at least 1.20x "
                                 "against the same config with FP32 accumulation, with standard max error under 2.0e-2, the Speed lens bound.")
     v = next(e for e in of(o, "verdict") if e["hypothesis"] == variant["id"])
     assert (v["verdict"], v["provisional"]) == ("confirmed", True)
@@ -346,9 +349,9 @@ def test_websocket_sends_history_then_streams_and_accepts_commands(tmp_path):
             ws.send_text(json.dumps({"type": "add_directive", "lens": "speed", "text": "Go faster."}))
             gate.set()
             seen = []
-            while "directive_added" not in seen:
+            # the directive can apply while H0's model call runs, before or after hypothesis_proposed
+            while not {"directive_added", "hypothesis_proposed"} <= set(seen):
                 seen.append(json.loads(ws.receive_text())["type"])
-            assert "hypothesis_proposed" in seen
 
 
 def test_pivots_stop_at_three_branches_per_lens(tmp_path):
@@ -830,7 +833,7 @@ def test_shared_memory_budget_is_checked_before_any_run():
     assert smem_bytes(Params(128, 128, 64, 4, 4)) == 98304 <= SMEM_LIMIT
     h_, _ = hyp.parse(h(P | {"block_n": 256, "block_k": 64, "warps": 8, "stages": 4}))
     assert h_["params"].stages == 3 and h_["adjusted"].startswith("Stages cut from 4 to 3") and "147456 bytes needed, 98304 of 101376" in h_["adjusted"]
-    assert hyp.parse(h(P | {"block_m": 256, "block_n": 256, "block_k": 64, "stages": 5}))[0]["params"].stages == 2  # largest that fits, not just one less
+    assert hyp.parse(h(P | {"block_m": 256, "block_n": 256, "block_k": 64, "warps": 16, "stages": 5}))[0]["params"].stages == 2  # largest that fits, not just one less
     assert hyp.parse(h(P))[0]["adjusted"] is None
     assert "101376 bytes" in hyp.SYSTEM
 
@@ -1162,3 +1165,80 @@ def test_a_tiling_hypothesis_never_cites_a_note_retrieved_for_another_change(tmp
     tiling = next(e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["params"]["stages"] == 4)
     assert "hl_acc1" not in (tiling.get("note") or "")
     assert any(e.get("note", {}).get("id") == "hl_acc1" for e in of(o, "papiers_context"))  # read for the prompt, not cited
+
+
+# ---- fixes from the 16:00 recording ----
+
+def test_a_config_over_the_register_limit_is_refused_before_any_run():
+    h_, why = hyp.parse(h(P | {"block_n": 256, "block_k": 64, "warps": 4}))
+    assert h_ is None and "256 fp32 accumulator elements" in why and "over the 128 register limit" in why
+    assert hyp.parse(h(P | {"block_n": 256, "block_k": 64, "warps": 8}))[0]
+    assert "Registers:" in hyp.SYSTEM
+
+
+def recorded_state(tmp_path, **kw):
+    """The 16:00 recording after the conflict: H0 on main, H1 on prec (8 warps) and H2 on speed2 (128x256, approx GELU)."""
+    from harness.kernel import Params
+    o = lens_state(tmp_path)
+    o.hyps[1].params, o.hyps[1].metrics = Params(128, 128, 64, 8, 4), met(0.728)
+    o.hyps[2].metrics = met(0.698, err=6.9e-4, adv=7.2e-4)
+    for k, v in kw.items():
+        setattr(o, k, v)
+    return o
+
+
+def test_a_hybrid_says_why_it_skips_a_union_that_is_one_parents_own_config(tmp_path):
+    from harness.kernel import Params
+    o = recorded_state(tmp_path)
+    o.maybe_hybrid()
+    assert o.hybrid["params"] == Params(128, 128, 64, 8, 4, gelu="approx")
+    text = of(o, "hybrid_proposed")[0]["text"]
+    assert "The full union, 128x256x64 tiles, 8 warps, 3 stages, FP32 accumulation, approx GELU, is H2's own configuration" in text
+    assert "Keeping the tile shape of prec (H1) instead." in text
+
+
+def test_a_summary_is_measured_against_the_base_the_run_was_timed_against(tmp_path):
+    from agent.orchestrator import Hyp
+    o = recorded_state(tmp_path)
+    o.hyps += [Hyp("H3", "speed2", "c", {}, o.hyps[0].params, base=o.hyps[1].params), Hyp("H4", "speed2", "c", {}, o.hyps[0].params)]
+    assert o.baseline(o.hyps[3])[1] is o.hyps[1].metrics
+    assert o.baseline(o.hyps[4])[1] is o.hyps[2].metrics  # the branch best, without a base
+
+
+def test_a_speed_directive_after_a_precision_one_says_the_precision_bound_still_applies(tmp_path):
+    o = recorded_state(tmp_path)
+    o.add_directive("speed", "Faster, I accept 2e-2.")
+    assert any("Precision bound of 1.0e-3 on the standard and adversarial batches still applies" in e["text"] for e in of(o, "agent_log"))
+    assert not any(e["text"].startswith("Speed lens bound assigned") for e in of(o, "agent_log"))
+
+
+def test_at_the_cap_a_bound_opens_no_branch_and_a_hunch_runs_in_a_reserved_slot(tmp_path, monkeypatch):
+    from agent import orchestrator
+    from harness.kernel import Params
+    monkeypatch.setattr(orchestrator, "DIRECTIVE_GAP_S", 0)
+    engine = Engine(TABLE | {json.dumps(Params(128, 256, 64, 8, 3, gelu="approx").dict(), sort_keys=True): met(0.698, err=6.9e-4, adv=7.2e-4)})
+    o = recorded_state(tmp_path, max_hyps=3, engine=engine, ask=Asker(h(P, 1.05)))
+    o.branches["speed2"].status = "done"
+    o.add_directive("speed", "Faster.")
+    assert not of(o, "branch_created") and "because the session reached its 3 hypothesis cap" in of(o, "plan_change")[-1]["text"]
+    o.add_directive("speed", "Try 128x128x32 tiles with 3 stages.")
+    b = o.next_branch()
+    assert b.id == of(o, "branch_created")[0]["branch"]["id"] and not o.capped()
+    o.iterate(b)
+    assert o.hyps[-1].params.dict() == P and o.hyps[-1].bonus and o.hyps[-1].note.startswith("Hunch from the Speed lens in directive d")
+    assert o.capped() and o.next_branch() is None
+
+
+def test_keep_tuning_guarantees_its_iterations_past_two_misses(tmp_path):
+    from harness.kernel import Params
+    slow = P | {"stages": 2}
+    engine = Engine(TABLE | {json.dumps(Params(128, 256, 64, 8, 3, gelu="approx").dict(), sort_keys=True): met(0.698, err=6.9e-4, adv=7.2e-4),
+                             json.dumps(slow, sort_keys=True): met(0.9)})
+    o = recorded_state(tmp_path, engine=engine, ask=Asker(h(slow, 1.05)))
+    b = o.branches["speed2"]
+    b.misses = 1
+    o.promise("hq1", b, 2)
+    o.iterate(b)
+    assert o.hyps[-1].judgment.verdict == "rejected" and b.misses == 2
+    assert b.status == "running" and o.promised("speed2") == 1
+    assert of(o, "summary")[-1]["summary"]["next_step"] == "Try a different change on this branch."

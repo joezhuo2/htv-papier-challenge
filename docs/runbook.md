@@ -24,7 +24,7 @@ Open `http://localhost:5173/`. Modes:
 
 Presenter keys: 1 and 2 switch lens, Space pauses, Right steps, Left steps back, Esc clears the selection. The top bar has chapters (jump to a beat), auto-pause at chapters, speed, restart, and in live mode Save as replay and Stop.
 
-Judging build (no mock mode, opens the first recorded run that loads: `runs/demo.jsonl`, then `runs/fallback1.jsonl`, `runs/fallback2.jsonl` and on):
+Judging build (no mock mode, opens the first recorded run that loads: `runs/demo.jsonl`, then `runs/fallback1.jsonl`, `runs/fallback2.jsonl` and on). Current fallbacks: `fallback1.jsonl` is the 16:00 hand-played recording (`war-room-2026-10-17-16-00-14.jsonl`), `fallback2.jsonl` and `fallback3.jsonl` are the former fallback1 and fallback2. `runs/` is gitignored, so these live on the build machine only:
 
 ```bash
 cd src/ui && npm run build:judging && npx vite preview
@@ -44,7 +44,7 @@ Server settings: `AUTOSTART=1` (start without the UI), `MAX_HYPS` (default 1, se
 
 ## Scripted recording
 
-With the server running, `agent.drive` plays both lenses over the websocket (Speed directive after H0, Precision on the first provisional verdict, the tanh GELU hunch, keep tuning on every help request, approve the hybrid) and prints every event. The replay is `runs/sessions/<id>/replay.jsonl`.
+With the server running, `agent.drive` plays both lenses over the websocket (Speed directive after H0, Precision on the first provisional verdict, the tile hunch "Try 128x128x32 tiles with 3 stages" 25 s later, keep tuning on every help request, approve the hybrid) and prints every event. The hunch names the measured headroom config because the model proposes approximate GELU by itself (three times in the 16:00 recording), which made the old GELU hunch a repeat; it runs in a reserved slot, so it is tested even when the cap is reached. Playing by hand, send the same hunch from the Speed tab soon after the Precision directive. The replay is `runs/sessions/<id>/replay.jsonl`.
 
 ```bash
 uv run python -m agent.drive
@@ -108,7 +108,7 @@ papiers auth status
 papiers search "FP16 accumulation" --json
 ```
 
-The CLI is read-only. As of 11:45 the account holds 5 highlights (none annotated), 0 notes, 6 documents and 0 conversations, and passage search returns nothing. Useful checks: `papiers list --kind highlight --json`, `papiers search "accumulation precision FP16" --kind highlight --json`, `papiers read hl_<id> --json` (shows `annotationText`).
+The CLI is read-only. As of 11:45 the account held 5 highlights (none annotated), 0 notes, 6 documents and 0 conversations, and passage search returned nothing. Annotations were added around 16:30 and should show as "your note" in the next recording; check with the `read` command below, the only one that returns `annotationText`. Useful checks: `papiers list --kind highlight --json`, `papiers search "accumulation precision FP16" --kind highlight --json`, `papiers read hl_<id> --json` (shows `annotationText`).
 
 Eager error by rounding step: `uv run python -m harness.eager_error`.
 

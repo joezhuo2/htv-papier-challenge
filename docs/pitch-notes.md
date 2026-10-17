@@ -24,7 +24,8 @@ What to say, what to disclose, and which numbers are safe to quote.
 3. Precision directive: the same logged run is re-judged and rejected, no new run, conflict detected, branch rejected.
 4. Post-mortem with the error-versus-K sweep and the pivot that rules out FP16 accumulation.
 5. Help request on an inconclusive result while another branch keeps working; answer it or let the default apply.
-6. Final result screen: best result, what was rejected and why, what the humans decided, exported files.
+6. Human hunch from the Speed tab ("Try 128x128x32 tiles with 3 stages"): it becomes the next hypothesis on the Speed branch, is cited as a hunch, and is judged in code like any other. It runs in a reserved slot past the cap, which is worth disclosing if asked.
+7. Final result screen: best result, what was rejected and why, what the humans decided, exported files.
 
 ## Screenshots
 

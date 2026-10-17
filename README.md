@@ -18,18 +18,20 @@ FP16 accumulation is the designed failure: it is faster on this GPU, its standar
 
 RTX 5060 Laptop GPU (Blackwell, compute capability 12.0, 8 GB), WSL2 on Windows, PyTorch 2.11 for CUDA 12.8, Triton 3.6. Standard batch M = N = K = 2048 in FP16.
 
-| Run | Latency | max_error | Passes 1e-3 |
-| --- | --- | --- | --- |
-| PyTorch eager | 0.69 ms | 1.5e-3 | no |
-| Naive Triton start (16x16x16 tiles, 1 warp, 1 stage) | 2.0 ms | 4.9e-4 | yes |
-| Best sweep config (128x128x32, 4 warps, 3 stages) | 0.64 ms | 4.9e-4 | yes |
-| Same config, FP16 accumulation | 0.45 ms | 1.3e-2 | no |
+Speedups are same-window: the candidate is timed interleaved with naive, eager and its parent in one child process, over 10 separate processes per row (`harness.stability`, saved to `src/harness/headroom.json`).
 
-The best FP32 config is about 3.1x faster than the naive start and about 1.07x faster than eager. FP16 accumulation is faster still but fails the error bound, which is the failure the agent has to discover and reject by itself. Run to run latency noise across separate processes is about 0.6% (coefficient of variation), and drift over 3 minutes of sustained load is under 0.2%. Over longer agent sessions, speedups against a reference timed in a different process varied far more (the same FP16 comparison measured between 1.28x and 2.36x), so the noise model is being reworked before speedup verdicts near a threshold are trusted.
+| Config | vs naive | vs eager | max_error | adv_error | Passes 1e-3 |
+| --- | --- | --- | --- | --- | --- |
+| Naive Triton start (16x16x16 tiles, 1 warp, 1 stage) | 1.00x | about 0.37x | 4.9e-4 | 5.2e-4 | yes |
+| PyTorch eager | about 2.67x | 1.00x | 1.5e-3 | 2.5e-3 | no |
+| Best sweep config (128x128x32, 4 warps, 3 stages) | 2.75x (2.70 to 2.78) | 1.03x (1.02 to 1.04) | 4.9e-4 | 5.2e-4 | yes |
+| Same config, FP16 accumulation | 4.03x (3.99 to 4.09) | 1.52x (1.49 to 1.54) | 1.3e-2 | 7.1e-2 | no |
+
+The best FP32 config is about 2.75x faster than the naive start and about 3% faster than eager, and eager itself fails the 1e-3 gate (its FP16 intermediate roundings, explained in docs/results.md). FP16 accumulation is about 1.48x faster still but fails the error bound by 13x on the standard batch and 71x on the adversarial batch, which is the failure the agent has to discover and reject by itself. Across processes the speedups vary by under 1% (coefficient of variation), and within one timing window the per-round spread is about 4%, which the verdicts use as the noise band.
 
 ## Model choice
 
-All models run through NVIDIA NIM's hosted OpenAI compatible API. Each model got the same hypothesis prompt 10 times (current params, a Speed directive, and the naive kernel's measured result), and every proposed edit was run through the harness.
+The first model benchmark ran through NVIDIA NIM's hosted OpenAI compatible API. Each model got the same hypothesis prompt 10 times (current params, a Speed directive, and the naive kernel's measured result), and every proposed edit was run through the harness.
 
 | Model | Median latency | Valid JSON | Edit compiles | Edit passes 1e-3 |
 | --- | --- | --- | --- | --- |

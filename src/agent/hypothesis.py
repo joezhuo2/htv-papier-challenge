@@ -3,7 +3,16 @@
 import json
 import re
 
-from harness.kernel import ACC, GELU, SMEM_LIMIT, Params, fit_stages, smem_bytes
+from harness.kernel import (
+    ACC,
+    ACC_LIMIT,
+    GELU,
+    SMEM_LIMIT,
+    Params,
+    acc_per_thread,
+    fit_stages,
+    smem_bytes,
+)
 
 SYSTEM = f"""You are a GPU kernel research agent tuning a fused Triton kernel computing gelu(x @ w + b) in FP16 on an RTX 5060 laptop GPU (Blackwell, 8 GB). Shape M = N = K = 2048.
 You may only edit these parameters:
@@ -14,6 +23,8 @@ You may only edit these parameters:
 - gelu: one of {list(GELU)} (approx is the tanh formulation)
 Shared memory: a config needs (stages - 1) * (block_m * block_k + block_k * block_n) * 2 bytes and must stay at or under {SMEM_LIMIT} bytes.
 For example 128x256x64 with 4 stages needs 147456 bytes and does not fit, 128x128x64 with 4 stages needs 98304 and fits.
+Registers: each thread holds block_m * block_n / (warps * 32) accumulator elements, at most {ACC_LIMIT["fp32"]} with fp32 and {ACC_LIMIT["fp16"]} with fp16 accumulation, or the kernel spills to local memory and runs about 10x slower.
+For example 128x256 with 4 warps puts 256 fp32 elements on each thread and is refused, 128x256 with 8 warps puts 128 and is allowed.
 Before any run, state a falsifiable hypothesis with thresholds. The harness, not you, decides whether it held.
 Never propose a configuration listed as already tried.
 min_speedup is the ratio start latency / new latency you expect. Against "parent_best" a realistic value is between 1.02 and 2.0. Against "naive" it is between 1.1 and 10.
@@ -75,6 +86,10 @@ def parse(text):
     except (TypeError, ValueError) as e:
         return None, f"invalid params: {e}"
     # over the shared memory limit, the largest stage count that fits is tested and the caller rewrites the claim from the final params
+    per, limit = acc_per_thread(params), ACC_LIMIT[params.acc]
+    if per > limit:
+        return None, (f"{params.block_m}x{params.block_n} tiles over {params.warps} warps put {per} {params.acc} accumulator elements on each thread, "
+                      f"over the {limit} register limit; use more warps or a smaller output tile")
     fitted = fit_stages(params)
     adjusted = None if fitted == params else (f"Stages cut from {params.stages} to {fitted.stages}, the largest count that fits in shared memory "
                                               f"({smem_bytes(params)} bytes needed, {smem_bytes(fitted)} of {SMEM_LIMIT} after the cut)")

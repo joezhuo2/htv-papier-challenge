@@ -15,7 +15,6 @@
 
 ## Still open
 
-- A hypothesis or run id on `Summary`: the UI ties a summary to the newest finished run on its branch.
 - A field on `PostMortem` for what the agent will not try again: the UI derives it from the pivot.
 - A `dismiss_hybrid` command, and agent support for `report_ready` (the comparative report is only in the mock).
 
@@ -24,7 +23,6 @@
 9. The agent emits `hybrid_proposed` and acts on `approve_hybrid` (a `merge` branch with both parents, label Hybrid, status `merged` on the parents when it is confirmed).
 10. `plan_change.help` is the id it answers: a help request (`hq1`) or a directive (`d2`) for hunch replies.
 11. Failed runs get a `post_mortem` with an empty sweep. Every branch has a final `branch_status` before `session_finished`, and provider failover lines are no longer `agent_log` events.
-- Failed runs send null metric fields although `Metrics` types them as numbers.
 
 ## Changes made at 11:10 to 11:45
 
@@ -33,3 +31,10 @@
 14. `papiers_context.note` is `PapiersNote { id, title, excerpt, kind?, document_title?, highlight_text?, annotation? }`. Old logs without the new fields stay valid.
 15. `PostMortem` gains optional `note`, the Papiers id retrieved for the measured cause.
 16. Hypothesis notes cite "Context from Papiers <kind> <id>", and constraint-only directives are noted "Tested under the <lens> lens bound set by <id>" instead of "Hunch from".
+
+## Changes made at 16:30
+
+17. A Precision directive re-judges every measured run whose last verdict has a different bound, so `verdict` events can repeat a hypothesis's verdict with the new bound (for example H0 confirmed under default, then confirmed under Precision). Old logs stay valid. The Precision branch's `branch_created` now comes before the re-judge's `verdict` and `conflict_detected` events.
+18. `conflict_detected.reason` names the batches that failed, `verdict.reason` for a provisional result names only the errors over the strict bound, and claims and pivots use readable settings ("FP16 accumulation", "approx GELU") instead of `acc=fp16`.
+19. `run_finished.run.metrics` is `Metrics | FailedMetrics`: a run that failed to compile, crashed or timed out sends null for latency, throughput, both errors and VRAM, and the type now says so (it was typed as numbers).
+20. `Summary` gains optional `hypothesis`, the hypothesis it is about. The UI used to tie a summary to the newest finished run on its branch, which put H1's post-flip summary on H2 in the 16:00 recording; logs without the field still use that fallback.

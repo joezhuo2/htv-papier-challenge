@@ -1,7 +1,7 @@
 """uv run python -m agent.drive: plays both lenses against a running server (uvicorn server.app:app --port 8000) in recording mode.
 
 The recording plan, scripted: Start recording, the Speed directive after H0, the Precision directive once a verdict is provisional,
-the tanh GELU hunch 25 s later, keep tuning on every help request after 12 s, and approval of the hybrid after 6 s. Prints every
+the 128x128x32 tile hunch 25 s later, keep tuning on every help request after 12 s, and approval of the hybrid after 6 s. Prints every
 event. The replay is runs/sessions/<id>/replay.jsonl, named in the server's /health.
 """
 
@@ -13,7 +13,7 @@ import websockets
 
 SPEED = "Push throughput harder than tile tuning alone. I can accept max error up to 2e-2."
 PREC = "Accuracy matters more than speed here. Keep max error under 1e-3 on every batch, including the adversarial one."
-HUNCH = "Try the tanh approximate GELU. I think it is cheap and the error should stay small."
+HUNCH = "Try 128x128x32 tiles with 3 stages. A shorter K step with a shallower pipeline might hide latency better."
 
 
 async def main(url="ws://localhost:8000/ws"):

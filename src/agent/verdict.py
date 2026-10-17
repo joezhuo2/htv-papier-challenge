@@ -55,7 +55,8 @@ def judge(prediction: dict, m: Metrics, speedup: float | None, noise: float, bou
     if any(c.passed is None for c in checks):
         return Judgment("inconclusive", False, "The speedup is inside the noise band around the predicted threshold.", checks)
     # Confirmed only under a looser lens tolerance, or with adversarial error no lens gates yet: provisional.
-    if adv_bound is None and (m.max_error >= strict or m.adv_error >= strict):
-        return Judgment("confirmed", True, f"Predictions hold under the {sci(bound)} tolerance. Standard error {sci(m.max_error)} and adversarial error "
-                                           f"{sci(m.adv_error)} are not both under the strict {sci(strict)} bound, which no lens enforces yet.", checks)
+    over = [f"{name} error {sci(x)}" for name, x in (("standard", m.max_error), ("adversarial", m.adv_error)) if x >= strict]
+    if adv_bound is None and over:
+        return Judgment("confirmed", True, f"Predictions hold under the {sci(bound)} tolerance. {' and '.join(over).capitalize()} "
+                                           f"{'are' if len(over) > 1 else 'is'} over the strict {sci(strict)} bound, which no lens enforces yet.", checks)
     return Judgment("confirmed", False, "Prediction holds.", checks)

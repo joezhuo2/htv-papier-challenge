@@ -49,9 +49,20 @@ Durations are real and compressed with the current player (idle gaps over 4 s sh
 | runs/live1.jsonl | 9:15 | 3:06 | 15 | yes | 3 / 3 | no | 0 | older code, long, best approximate GELU number |
 | runs/record1.jsonl | 7:43 | 1:41 | 8 | yes | 1 / 1 | no | 1 | shared memory compile failure (now prevented) |
 | runs/live2.jsonl | 6:24 | 1:46 | 8 | yes | 0 / 0 | no | 0 | no help request |
-| runs/fallback1.jsonl | 8:55 | 1:54 | 8 | no | 2 / 1 | no | 2 | presenter recording; Precision before FP16, two shared memory failures |
+| runs/fallback1.jsonl (16:00, `war-room-2026-10-17-16-00-14.jsonl`) | 3:11 | 1:45 | 9 | yes | 3 / 3 | proposed, approved | 0 | hand played on the code before the 16:30 fixes; flip at 90.9 s; H6 (128x256 on 4 warps) spilled 1442 words at 0.10x; the GELU hunch arrived after the cap and never ran; best confirmed H3 at 2.65x vs naive and 0.97x vs eager |
+| runs/fallback2.jsonl (was fallback1) | 8:55 | 1:54 | 8 | no | 2 / 1 | no | 2 | presenter recording; Precision before FP16, two shared memory failures |
+| runs/fallback3.jsonl (was fallback2) | | | | | | | | not described in these notes |
 
-Recommendation: none of these shows every beat on the final code. Record one more session with the current build and the recording plan (Start recording, Speed directive, wait for the provisional card, Precision directive, hunch, answer the help request, approve the hybrid), with the GPU healthy, and use it as `runs/demo.jsonl`. Until then the UI falls back from `demo.jsonl` to `fallback1.jsonl`, `fallback2.jsonl` and on.
+Recommendation: none of these shows every beat on the final code. Record one more session with the current build (after the 16:30 fixes) and the recording plan (Start recording, Speed directive, wait for the provisional card, Precision directive, the tile hunch "Try 128x128x32 tiles with 3 stages", answer the help requests, approve the hybrid), with the GPU healthy, and use it as `runs/demo.jsonl`. Until then the UI falls back from `demo.jsonl` to `fallback1.jsonl` (the 16:00 recording), `fallback2.jsonl` and on.
+
+## Recording fallback1 (16:00, hand played, code before the 16:30 fixes)
+
+- 191 s real, 105 s compressed, 9 hypotheses (8 plus the hybrid), 0 crashed runs, help requests hq1 to hq3 all answered "keep tuning".
+- Seeded FP16 (H1) provisional at 78.0 s, 1.51x +/- 0.03x over its FP32 parent, standard 1.3e-2 and adversarial 7.1e-2; the Precision directive at 90.9 s flipped it to rejected with the conflict in the same millisecond, post-mortem with the K sweep at 105.2 s.
+- The model proposed approximate GELU by itself three times (H2, H5, and the H7 hybrid), each inconclusive inside the noise band (1.09x, 1.06x, 1.01x).
+- H6, 128x256x64 tiles on 4 warps (256 FP32 accumulator elements per thread), compiled to 40 registers and 1442 spilled words per thread and ran at 7.373 ms, 0.10x of its parent: the first real register post-mortem and the first real off-scale chart point.
+- Best confirmed result: H3 (128x256x64, 8 warps, 3 stages), 2.65x vs naive and 0.97x vs eager. The agent never tried block_k 32, the measured headroom config (2.75x, 1.03x).
+- Problems it exposed, all fixed at 16:30 (see docs/status.md): the late hunch opened an empty branch and was dropped by the cap, the Speed bound message ignored the active Precision bound, the cap was blamed for an iteration that the two-miss rule cut, the hybrid text named changes its candidate did not have, the hybrid summary used a different baseline from its claim, register overflow was only checked for hybrids, re-judging skipped every run that was not provisional, and the Precision branch opened 14 s late behind the post-mortem.
 
 ## Models per role
 
