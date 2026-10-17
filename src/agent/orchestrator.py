@@ -132,7 +132,9 @@ def cite_text(n):
 def claim_text(start: Params, p: Params, pred, bound):
     """A claim built from the final parameters, used whenever the harness adjusted the proposed ones."""
     vs = "naive" if pred["vs"] == "naive" else "the best configuration on this branch"
-    return (f"{change(start, p).capitalize()}, giving {params_text(p)}, is at least {pred['min_speedup']:.2f}x faster than {vs}, "
+    # from the naive start every knob changes, so the delta list would only repeat the config
+    what = params_text(p) if start == NAIVE else f"{change(start, p).capitalize()}, giving {params_text(p)},"
+    return (f"{what} is at least {pred['min_speedup']:.2f}x faster than {vs}, "
             f"with standard max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound.")
 
 
@@ -234,7 +236,7 @@ def miss_cause(p: Params, base: Params, m: Metrics, parent: Metrics, speedup, pr
         if speedup * (1 - (noise or 0.0)) <= 1:  # not clearly faster: the band around the speedup still reaches 1.0
             why = (f"{fell}, so {change(base, p)} did relieve register pressure, but that was not the bottleneck"
                    + (f"; what the change costs instead: {'; '.join(effects)}" if effects else ""))
-            pivot = f"Revert {change(base, p)}: register pressure is not what limits this config" + nxt
+            pivot = f"Revert {change(base, p)}, since register pressure is not what limits this config" + (f", and try {untried} next." if untried else ".")
         else:
             why = f"{fell}, which likely explains the gain, though it is smaller than predicted"
             pivot = f"Keep {change(base, p)} and look for the next limit beyond registers."
@@ -348,7 +350,7 @@ class Orchestrator:
         self.promises: list[dict] = []  # extra iterations a plan_change promised: {ref, branch, n, start}
         self.conflicts = 0
         self.hybrid: dict | None = None  # {branches, params, base, text, t, state: proposed, approved, expired, done}
-        self.skipped = ""  # the last logged reason no hybrid could be proposed
+        self.skipped = set()  # the kinds of reason no hybrid could be proposed that were already logged
         self.unmerged = ""  # why no run qualified for a hybrid so far, logged at the end if none was proposed
         self.hunches: dict[str, str] = {}  # directive or help id of a concrete hunch -> the hypothesis that tested it, or "not run: <why>"
         self.taken: Hint | None = None  # the hint the current proposal used, restored if its branch is rejected before the run
@@ -569,8 +571,11 @@ class Orchestrator:
         """Computed from the log: the best confirmed run, what was ruled out, what to try next, what needs a human, and each typed hunch's outcome."""
         done = [h for h in self.hyps if h.judgment]
         ruled = [f"{h.id} on {h.branch}, {change(self.baseline(h)[0], h.params)}: {self.outcome(h)}" for h in done if h.judgment.verdict == "rejected"]
+        reruns = [h for h in done if h.judgment.verdict == "inconclusive"]
+        # an inconclusive best run is the result itself, so confirming it comes first
+        picked = [best] + [h for h in reruns if h is not best][-1:] if best in reruns else reruns[-2:]
         nxt = [f"Rerun {h.id} ({change(self.baseline(h)[0], h.params)}) with more timing rounds: {self.outcome(h)} sits inside the noise band."
-               for h in done if h.judgment.verdict == "inconclusive"][-2:]
+               for h in picked]
         nxt += list(dict.fromkeys(self.pms[h.id]["pivot"] for h in reversed(done) if h.id in self.pms))[:3 - len(nxt)]
         human = [f"{hid} ({x['help']['target'].capitalize()} lens): {x['help']['question']}" for hid, x in self.helps.items()
                  if not x["answered"] and not x["cancelled"]]
@@ -1506,9 +1511,9 @@ class Orchestrator:
             return "it did not run"
         return (f"{self.gain(h):.2f}x vs its parent, under 1.00x" if self.gain(h) < 1.0 else self.failed_bound(h))
 
-    def skip_hybrid(self, text):
-        if text != self.skipped:  # logged once per distinct reason, since this runs after every iteration
-            self.skipped = text
+    def skip_hybrid(self, kind, text):
+        if kind not in self.skipped:  # logged once per kind of reason, since this runs after every iteration with a new donor
+            self.skipped.add(kind)
             self.log.emit("agent_log", text=text)
 
     def maybe_hybrid(self):
@@ -1526,7 +1531,7 @@ class Orchestrator:
         if not others:
             return
         if why := self.merge_why_not(best):
-            self.skip_hybrid(f"No hybrid: the best config, {best.id} on {best.branch}, does not qualify ({why}).")
+            self.skip_hybrid("best", f"No hybrid: the best config, {best.id} on {best.branch}, does not qualify ({why}).")
             return
         donors = [h for h in others if not self.merge_why_not(h)]
         if not donors:
@@ -1542,10 +1547,11 @@ class Orchestrator:
         ran = next((x for x in self.hyps if x.params == p), None)
         pair = (f"{best.id} on {best.branch} ({params_text(best.params)}) with {', '.join(setting(donor.params, k) for k in ks)} "
                 f"from {donor.id} on {donor.branch}")
-        why = (f"{params_text(p)} puts {per} {p.acc.upper()} accumulator elements on each of {p.warps * 32} threads, over {limit}" if per > limit
-               else f"{params_text(p)} already ran as {ran.id} on {ran.branch}" if ran else None)
-        if why:
-            self.skip_hybrid(f"No hybrid of {pair}: {why}.")
+        kind = "acc" if per > limit else "ran" if ran else None
+        if kind:
+            why = (f"{params_text(p)} puts {per} {p.acc.upper()} accumulator elements on each of {p.warps * 32} threads, over {limit}" if kind == "acc"
+                   else f"{params_text(p)} already ran as {ran.id} on {ran.branch}")
+            self.skip_hybrid(kind, f"No hybrid of {pair}: {why}.")
             return
         text = (f"Combine the best confirmed config, {pair}, the largest gain on another branch that passes every active bound "
                 f"({self.gain(donor):.2f}x over its parent). Candidate: {params_text(p)}, {per} accumulator elements per thread. "
@@ -1697,7 +1703,9 @@ class Orchestrator:
     def post_mortem(self, h: Hyp):
         m = h.metrics
         p = h.prediction
-        expected = f"Speedup of at least {p['min_speedup']:.2f}x vs {'naive' if p['vs'] == 'naive' else 'the best so far'} with max error under {sci(p['max_error'])}."
+        b = h.bounds[-1]  # the bound the verdict was judged under, which a later directive may have changed from the prediction's
+        gate = f"standard max error under {sci(b['standard'])}" + (f" and adversarial max error under {sci(b['adversarial'])}" if b["adversarial"] else "")
+        expected = f"Speedup of at least {p['min_speedup']:.2f}x vs {'naive' if p['vs'] == 'naive' else 'the best so far'} with {gate}."
         base = self.start_point(h.branch)[0]
         if m.latency_ms is None:
             found = self.papiers("tile size shared memory" if "shared memory" in (m.error or "") else facet(base, h.params))
@@ -1758,6 +1766,7 @@ class Orchestrator:
         """Every field is computed from the verdict, its checks and the run's measured spread, so it cannot contradict them."""
         m = h.metrics
         before_p, before = self.baseline(h)
+        delta = change(before_p, h.params)
         j = h.judgment
         moved = [] if m.latency_ms is None else [
             {"metric": "latency", "before": before.latency_ms, "after": m.latency_ms, "unit": "ms"},
@@ -1772,7 +1781,7 @@ class Orchestrator:
         summary = {
             "branch": b.id,
             "hypothesis": h.id,
-            "tried": f"{h.claim} ({change(before_p, h.params)})",
+            "tried": h.claim if before_p == NAIVE or delta.lower() in h.claim.lower() else f"{h.claim} ({delta})",
             "moved": moved,
             "verdict": verdict,
             "confidence": confidence,
