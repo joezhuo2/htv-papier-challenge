@@ -77,10 +77,10 @@ export function App({ source }: { source: Source }) {
     URL.revokeObjectURL(a.href)
   }
 
-  const waiting = [...new Set(view.helps.filter(h => !h.answer).map(h => h.help.target))]
+  const waiting = view.finished ? [] : [...new Set(view.helps.filter(h => !h.answer).map(h => h.help.target))]
   const mine = view.helps.filter(h => h.help.target === view.lens)
-  const open = mine.filter(h => !h.answer)
-  const answered = mine.filter(h => h.answer)
+  const open = mine.filter(h => !h.answer && !view.finished)
+  const answered = mine.filter(h => h.answer || view.finished)
 
   return (
     <div className="app" data-lens={view.lens}>

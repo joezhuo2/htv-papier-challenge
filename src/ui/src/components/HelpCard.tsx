@@ -33,6 +33,16 @@ export function HelpCard({ view, hv, now, sent, onSend }: Props) {
     )
   }
 
+  if (view.finished) {
+    return (
+      <article className="card" data-testid={`help-${help.id}`}>
+        <div className="row"><h3>Help request <span className="mono">{help.id}</span></h3><span className="tag">closed</span><MockTag on={hv.mock} /></div>
+        <p className="small">{help.question}</p>
+        <p className="small"><span className="muted">Session ended without an answer, proceeded on:</span> {label(help.default)}</p>
+      </article>
+    )
+  }
+
   return (
     <article className="card focus" data-testid={`help-${help.id}`} aria-label={`help request for ${lensName(help.target)}`}>
       <div className="row">

@@ -49,6 +49,17 @@ describe('help request', () => {
     expect(screen.getByRole('status').textContent).toBe('Proceeding on assumption: Keep tuning tiles and warps')
   })
 
+  it('closes an unanswered request when the session ends before its deadline', () => {
+    const asked = demoScript.findIndex(e => e.type === 'help_requested')
+    const end = demoScript.find(e => e.type === 'session_finished')!
+    const view = { ...fold([...demoScript.slice(0, asked + 1), { ...end, t: demoScript[asked].t + 1000 }]), lens: 'speed' as const }
+    expect(view.helps[0].expired).toBe(true)
+    render(<HelpCard view={view} hv={view.helps[0]} now={demoScript[asked].t + 1000} sent={[]} onSend={() => {}} />)
+    expect(screen.queryByTestId('countdown')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Send answer' })).toBeNull()
+    expect(screen.getByText('closed')).toBeTruthy()
+  })
+
   it('labels summaries written while another branch waits as meanwhile', () => {
     render(<App source={{ mode: 'mock' }} />)
     at(111000)

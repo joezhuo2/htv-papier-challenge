@@ -216,7 +216,7 @@ export function reduce(prev: View, a: Action): View {
       return { ...v, errors: [...v.errors, err], stalled: e.kind === 'harness_timeout' ? v.stalled : err }
     }
     case 'session_finished':
-      return { ...v, finished: true, ledger: e.ledger, best: e.best }
+      return { ...v, finished: true, ledger: e.ledger, best: e.best, helps: v.helps.map(h => (h.answer ? h : { ...h, expired: true })) }
   }
 }
 
