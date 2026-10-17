@@ -1,0 +1,36 @@
+# Decisions
+
+Project: Multi-POV Research War Room. Solo build by Joe for Hack the Valley 11, entered in the Papiers Autoresearch Challenge. An autonomous agent tunes a fused matmul + bias + GELU Triton kernel under two competing lenses (Speed and Precision) that one person switches between in a web UI. `war-room-plan.md` has the full spec and `CLAUDE.md` has the standing rules. Where this file disagrees with the plan, this file wins (see Overrides).
+
+## Locked
+
+- **Domain:** GPU kernel tuning, fused matmul + bias + GELU in Triton, baseline is PyTorch eager (`gelu(x @ w + b)`).
+- **Hardware and env:** RTX 5060 laptop (8GB VRAM, compute capability 12.0), WSL2 on Windows, Python with `uv`, PyTorch for CUDA 12.8 or newer. Fallback domain if Triton fails: quantization and pruning.
+- **Starting kernel:** correct and fused but deliberately weak (tiny tiles, 1 warp, 1 stage, FP32 accumulation, exact GELU, no autotune). Must pass `max_error < 1e-3` before any agent work. Inputs scaled so outputs are O(1), error measured against an FP32 reference.
+- **Agent edit surface:** tile sizes, warps, stages, accumulation dtype, GELU formulation (exact or approximate), fusion boundaries. No free-form kernel rewrites.
+- **Verdicts:** the agent states a falsifiable prediction before each run, and the verdict (`confirmed`, `rejected`, `inconclusive`) is computed in code from metrics, never by the LLM. Noise band comes from measured run to run spread.
+- **Failure by design:** an aggressive low-precision hypothesis (FP16 accumulation) that the agent itself rejects with a post-mortem and an error-vs-K sweep. Must reproduce. Check first that FP16 accumulation is actually faster on this GPU.
+- **Help requests:** routed to the relevant lens owner (badge on that tab). While blocked, the agent keeps exploring other branches. After the deadline it proceeds on a flagged default assumption.
+- **Roles:** Joe plays both lenses by switching tabs. Say so in the pitch.
+- **LLM:** NVIDIA NIM, OpenAI compatible API, key in `NVIDIA_API_KEY` in a gitignored `.env`. Fast model `nvidia/nemotron-3.5-lightning-30b-a3b`, stronger model `deepseek-ai/deepseek-v4.1-flash` (may be very slow). Final split decided by the model benchmark, which includes faster NIM fallback models.
+- **Stack:** FastAPI backend with WebSocket, React (Vite) front end, layout `src/{harness,agent,server,ui}`, `runs/` gitignored, `tests/`.
+- **Testing:** pytest and vitest. Markers `gpu` and `papiers` skipped by default. Golden test compares orchestrator events to a JSON export of `src/contract/demo-script.ts`. Per phase prompts are in `test-prompts.md`.
+- **Repo rules:** never commit or push unless Joe says so, no em dashes, minimal comments, concise names, no defensive boilerplate. Ask before assuming.
+
+## Contract (src/contract)
+
+`types.ts` defines state objects, `DemoEvent` and `Command`. `demo-script.ts` is a 66 event, 3 minute mock (flagged `mock: true`) with hypotheses H0 to H5: H0 tuned tiles confirmed, H1 FP16 accumulation provisional then rejected after the Precision directive, H2 inconclusive and triggers the help request, H3 safe pipeline confirmed, H4 approximate GELU confirmed after Joe's typed hunch, H5 hybrid confirmed. `replay.ts` replays events at `t / speed`. Presenter controls (pause, resume, step) are still to add.
+
+## Demo
+
+Default demo is replay of a recorded real run (log every event as JSONL in the contract format, no mock flag), labeled "recorded run" on screen. Idle gaps compressed and disclosed. A "run one real iteration" option at the table was recommended for the Authenticity criterion but is not yet confirmed by Joe. A demo video is optional, skip unless time is left.
+
+## Scope tiers
+
+Tier 1 by Saturday 9pm: harness, loop with programmatic verdicts, lens tabs, directives, one fork, reproducible self rejection, summary cards, one help request, Papiers read and export, UI items 1 to 4. Tier 2 by Sunday 9:30am: hybrid merge, conflict banner, ledger table, comparative report, polish. Cut order: Papiers depth, ledger table, conflict banner, hybrid merge. Never cut the failure path, summary cards or the help request.
+
+## Overrides to war-room-plan.md
+
+- Papiers has no write-back through the CLI, so findings are exported for manual import (see `papiers.md`). Plan Section 11 and the `papiers_write` mock events say otherwise.
+- UI is React with Vite, not the plain page suggested in plan Sections 12 and 19.
+- Demo is replay based, no recording hour on Saturday, and no re-record step on Sunday.
