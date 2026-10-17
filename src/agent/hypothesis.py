@@ -98,3 +98,31 @@ def directive(lens, text):
     if lens == "speed":
         return {"constraint": "maximize_speed", "threshold": min(value, SPEED_CEILING) if value else SPEED_TOLERANCE}
     return {"constraint": "max_error", "threshold": min(value, STRICT) if value else STRICT}
+
+
+VAGUE = re.compile(r"\b(bigger|larger|smaller|wider|narrower|more|fewer|double|halve|increase|decrease|reduce)\b[^.]{0,30}\b(tiles?|blocks?|block_[mnk]|warps|stages)\b"
+                   r"|\bgelu\b|\b(fp16|bf16|fp32|tf32)\b|\bfus(e|ion)\b")
+
+
+def hunch_change(text):
+    """The parameter values a directive names, {} when it names a concrete change without a value (bigger tiles, a GELU change),
+    None when it only sets a constraint."""
+    t = text.lower()
+    d = {}
+    if re.search(r"\btanh\b|\bapprox", t):
+        d["gelu"] = "approx"
+    elif re.search(r"\berf\b|exact gelu", t):
+        d["gelu"] = "exact"
+    if re.search(r"\b(fp16|half)[- ]?(precision )?accum|accumulat\w* in (fp16|half)", t):
+        d["acc"] = "fp16"
+    elif re.search(r"\bfp32 accum|accumulat\w* in fp32", t):
+        d["acc"] = "fp32"
+    if m := re.search(r"\b(\d+)\s*x\s*(\d+)\s*x\s*(\d+)\b", t):
+        d |= dict(zip(("block_m", "block_n", "block_k"), map(int, m.groups())))
+    if m := re.search(r"\b(\d+)\s*warps?\b", t):
+        d["warps"] = int(m.group(1))
+    if m := re.search(r"\b(\d+)\s*(?:pipeline\s*)?stages?\b", t):
+        d["stages"] = int(m.group(1))
+    if d:
+        return d
+    return {} if VAGUE.search(t) else None

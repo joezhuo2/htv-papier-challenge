@@ -430,29 +430,59 @@ class Orchestrator:
             pid = parent.branch if parent else "main"
             reason = f"{'Speed' if lens == 'speed' else 'Precision'} lens directive {d['id']}: {text}"
             target = self.fork(pid, lens, f"{'Speed' if lens == 'speed' else 'Precision'} lens", reason)
-        self.hunch(target, text, f"Hunch from the {lens.capitalize()} lens in directive {d['id']}", d["id"], lens)
+        delta = hyp.hunch_change(text)
+        if delta is None:
+            self.bound_only(target, d)
+        else:
+            self.hunch(target, text, f"Hunch from the {lens.capitalize()} lens in directive {d['id']}", d["id"], lens, delta)
 
-    def hunch(self, b, text, cite, ref, lens):
+    def bound_only(self, b, d):
+        """A directive that names no concrete change is a constraint: the next hypothesis is attributed to its bound, not called a hunch."""
+        if self.capped() or self.stopped:
+            return
+        lens = d["lens"].capitalize()
+        self.hints.setdefault(b.id, (d["text"], f"Tested under the {lens} lens bound set by {d['id']}", d["id"], None))
+        bound = self.bounds(b.lens)
+        self.log.emit("plan_change", help=d["id"], text=f"{d['id']} sets a bound, not a specific change, so the next hypotheses on {b.id} are chosen by the agent "
+                                                       f"and judged against max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound.")
+
+    def tested(self, delta):
+        """The latest measured hypothesis whose own change was this hunch's, or None."""
+        hits = [x for x in self.hyps if x.judgment and x.metrics and x.metrics.latency_ms and all(getattr(x.params, k) == v for k, v in delta.items())
+                and any(getattr(self.prior(x)[0], k) != v for k, v in delta.items())]
+        return hits[-1] if hits else None
+
+    def earlier_text(self, delta):
+        e = delta and self.tested(delta)
+        if not e:
+            return ""
+        sp = f", {e.speedup:.2f}x vs {'naive' if e.ref == 'naive' else 'its parent'}" if e.speedup else ""
+        return (f" It was already tested in {e.id} ({e.judgment.verdict}{sp}) on {e.params.block_m}x{e.params.block_n}x{e.params.block_k} tiles, "
+                "so this is a retest on the current best tiles.")
+
+    def hunch(self, b, text, cite, ref, lens, delta):
         """A typed hunch is the next hypothesis on its branch, or gets a plan_change saying why not. Never dropped silently."""
         if self.capped() or self.stopped:
             why = f"the session reached its {self.max_hyps} hypothesis cap" if self.capped() else "the session was stopped"
             self.log.emit("plan_change", help=ref, text=f"Not testing \"{text[:120]}\" because {why}.")
             return
-        self.hints[b.id] = (text, cite, ref)
+        self.hints[b.id] = (text, cite, ref, delta)
         when = "next" if b.status == "running" else f"as soon as {b.id} resumes"
         bound = self.bounds(b.lens)
         self.log.emit("plan_change", help=ref, text=f"Because the {lens.capitalize()} lens sent \"{text[:120]}\", I am testing it {when} on {b.id}, "
-                                                    f"judged against max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound.")
+                                                    f"judged against max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound."
+                                                    + self.earlier_text(delta))
 
     def rehome_hints(self):
-        for bid, (text, cite, ref) in list(self.hints.items()):
+        for bid, hint in list(self.hints.items()):
+            text, ref = hint[0], hint[2]
             b = self.branches[bid]
             if b.status in ("running", "waiting_on_human"):
                 continue
             del self.hints[bid]
             others = [x for x in self.branches.values() if x.lens == b.lens and x.status in ("running", "waiting_on_human")]
             if others:
-                self.hints[others[-1].id] = (text, cite, ref)
+                self.hints[others[-1].id] = hint
                 self.log.emit("plan_change", help=ref, text=f"{bid} closed ({b.status}) before testing \"{text[:120]}\", so I am testing it next on {others[-1].id}.")
             else:
                 self.log.emit("plan_change", help=ref, text=f"{bid} closed ({b.status}) before testing \"{text[:120]}\" and no other {b.lens} branch is open. "
@@ -679,8 +709,10 @@ class Orchestrator:
                 self.close(b, "done")
         else:
             if cmd["option"] == "other" and note:
-                self.hints[b.id] = (note, f"Suggested by the {lens} lens in answer to {cmd['help']}", cmd["help"])
-                text = f"{late}Because the {lens} lens suggests \"{note}\", I am testing that next on {b.id} instead of more tile search, still under the active error bound."
+                delta = hyp.hunch_change(note) or {}
+                self.hints[b.id] = (note, f"Suggested by the {lens} lens in answer to {cmd['help']}", cmd["help"], delta)
+                text = (f"{late}Because the {lens} lens suggests \"{note}\", I am testing that next on {b.id} instead of more tile search, still under the active error bound."
+                        + self.earlier_text(delta))
             else:
                 text = f"{late}Because the {lens} lens wants more tile search, I am giving {b.id} two more iterations."
             if not x["expired"]:
@@ -737,18 +769,23 @@ class Orchestrator:
         # the seeded FP16 variant is the first Speed lens hypothesis, ahead of a pending hunch
         seed = self.seed(b, tried_all)
         if seed:
-            if b.id in self.hints:
+            if b.id in self.hints and self.hints[b.id][3] is not None:
                 self.log.emit("plan_change", help=self.hints[b.id][2], text=f"The scheduled FP16 variant runs first on {b.id}, "
                                                                             f"then \"{self.hints[b.id][0][:120]}\" is the next hypothesis there.")
             return seed
         hint = self.hints.pop(b.id, None)
+        if hint and hint[3] and self.tested(hint[3]):
+            retest = self.retest(b, start, hint, tried_all)
+            if retest:
+                return retest
+            hint = None
 
         tried = [{"params": h.params.dict(), "verdict": h.judgment.verdict, "metrics": h.metrics.contract()}
                  for h in self.hyps if h.branch == b.id and h.judgment and h.metrics.latency_ms]
         directives = [d for d in self.directives if b.lens in ("both", d["lens"])]
         notes = self.papiers(b, directives)
         messages = hyp.prompt(b.dict(), directives, {"params": start.dict(), "metrics": metrics.contract()}, tried, self.avoid,
-                              ([f"Suggestion from a human lens owner, test this next: {hint[0]}"] if hint else [])
+                              ([f"Suggestion from a human lens owner, test this next: {hint[0]}"] if hint and hint[3] is not None else [])
                               + [f"Papiers {n['id']} ({n['title']}): {n['excerpt']}" for n in notes], self.bounds(b.lens)["standard"], self.headroom)
         why, first = "", ""
         for attempt in range(3):
@@ -767,16 +804,36 @@ class Orchestrator:
                     claim = claim_text(start, h["params"], h["prediction"], self.bounds(b.lens))
                     cite = f"{cite}. {h['adjusted']}" if cite else h["adjusted"]
                 new = self.new_hyp(b, claim, h["prediction"], h["params"], cite)
-                if hint and first:
+                if hint and hint[3] is not None and first:
                     self.log.emit("plan_change", help=hint[2], text=f"My first reading of \"{hint[0][:120]}\" was not testable ({first}), so {new.id} tests "
                                                                     f"the closest valid version: {change(start, new.params)}.")
                 return new
             first = first or why
             messages = messages + [{"role": "assistant", "content": text}, {"role": "user", "content": f"Invalid: {why}. Reply again with only the JSON object."}]
-        if hint:
+        if hint and hint[3] is not None:
             self.log.emit("plan_change", help=hint[2], text=f"I could not turn \"{hint[0][:120]}\" into a valid configuration on {b.id} ({why}), so it is not tested.")
         self.log.emit("agent_log", text=f"No valid hypothesis for branch {b.id} after 3 attempts ({why}). Closing the branch.")
         return None
+
+    def retest(self, b, start, hint, tried_all):
+        """A hunch tested earlier is rerun as that change on this branch's current best params, built in code like the seed."""
+        e = self.tested(hint[3])
+        try:
+            p = fit_stages(replace(start, **hint[3]))
+        except ValueError as err:
+            self.log.emit("plan_change", help=hint[2], text=f"\"{hint[0][:120]}\" names an invalid value ({err}), so it is not retested.")
+            return None
+        if p == start or json.dumps(p.dict(), sort_keys=True) in tried_all:
+            self.log.emit("plan_change", help=hint[2], text=f"{b.id}'s current best already has {ruled_out(p, self.prior(e)[0])} or that exact config was run, "
+                                                           f"so \"{hint[0][:120]}\" is not retested. The earlier result is {e.id} ({e.judgment.verdict}).")
+            return None
+        bound = self.bounds(b.lens)
+        claim = (f"Retest of {e.id}: {change(start, p)} on the current best {params_text(start)} is at least 1.02x faster than that configuration, "
+                 f"with standard max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound.")
+        h = self.new_hyp(b, claim, {"min_speedup": 1.02, "vs": "parent_best", "max_error": bound["standard"]}, p,
+                         f"{hint[1]}, a retest of {e.id} on the current best tiles")
+        h.base = start
+        return h
 
     def correct_runs(self, branches):
         """Measured runs on these branches that pass every bound active now (the strict 1e-3 by default), fastest first."""

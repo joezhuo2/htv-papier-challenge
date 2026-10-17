@@ -960,3 +960,35 @@ def test_a_run_far_slower_than_its_parent_gets_a_register_post_mortem(tmp_path):
     assert "128 elements per thread, within the 128 limit" in pm["cause"] and "6.400 ms" in pm["observed"] and pm["sweep"] == []
     assert any(i["kind"] == "negative_result" and i["file"] == f"exports/{run['id']}-negative-result.md" for e in of(o, "findings_exported") for i in e["items"])
     assert_contract(o.log.events)
+
+
+# ---- hunch attribution ----
+
+def test_hunch_change_tells_constraints_from_concrete_changes():
+    assert hyp.hunch_change("Push throughput harder than tile tuning alone. I can accept max error up to 2e-2.") is None
+    assert hyp.hunch_change("Accuracy matters more than speed here. Keep max error under 1e-3 on every batch.") is None
+    assert hyp.hunch_change("Try the tanh approximate GELU.") == {"gelu": "approx"}
+    assert hyp.hunch_change("Use FP16 accumulation") == {"acc": "fp16"}
+    assert hyp.hunch_change("try 128x256x64 with 8 warps") == {"block_m": 128, "block_n": 256, "block_k": 64, "warps": 8}
+    assert hyp.hunch_change("bigger tiles please") == {}
+
+
+def test_constraint_directives_are_bounds_and_a_repeated_hunch_is_retested_on_the_best_tiles(tmp_path, monkeypatch):
+    from agent import orchestrator
+    monkeypatch.setattr(orchestrator, "DIRECTIVE_GAP_S", 0)
+    w8 = P | {"warps": 8}
+    engine = Engine(TABLE | {json.dumps(w8, sort_keys=True): met(0.55), json.dumps(w8 | {"gelu": "approx"}, sort_keys=True): met(0.54, err=6.9e-4, adv=7.2e-4)})
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(w8, 1.05), h(P | {"gelu": "approx"}, 1.02), default="no json"),
+             engine=engine, main_iters=1, branch_iters=3, help_deadline_s=0.3)
+    run_with(o, [(1, "speed", "Push throughput harder than tile tuning alone."), (4, "speed", "Try the tanh approximate GELU.")])
+    hyps = {e["hypothesis"]["id"]: e["hypothesis"] for e in of(o, "hypothesis_proposed")}
+    assert hyps["H2"]["note"] == "Tested under the Speed lens bound set by d1"
+    assert not any("Hunch" in (x.get("note") or "") for x in hyps.values() if x["id"] != "H4")
+    texts = [e["text"] for e in of(o, "plan_change")]
+    assert any(t.startswith("d1 sets a bound, not a specific change") for t in texts)
+    assert any("already tested in H3 (rejected, 0.86x vs its parent) on 128x128x32 tiles" in t for t in texts)
+    h4 = hyps["H4"]
+    assert h4["params"] == w8 | {"gelu": "approx"} and h4["note"] == "Hunch from the Speed lens in directive d2, a retest of H3 on the current best tiles"
+    assert h4["claim"].startswith("Retest of H3: gelu exact to approx on the current best 128x128x32 tiles, 8 warps")
+    assert not any(tag.startswith(f"{h4['branch']}-1") for _, tag, _ in o.ask.calls)  # built in code, no model call
+    assert_contract(o.log.events)
