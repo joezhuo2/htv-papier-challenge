@@ -5,6 +5,7 @@ Branches run one at a time on the single GPU. Commands from the UI (directives) 
 
 import json
 import queue
+import threading
 import re
 import time
 from dataclasses import dataclass, field, replace
@@ -16,12 +17,15 @@ from agent.verdict import Judgment, judge, sci
 from harness.data import BOUND
 from harness.kernel import NAIVE, Params
 from harness.metrics import Metrics
+from harness.runner import TIMEOUT_S
 
 SWEEP_KS = [256, 512, 1024, 2048, 4096]
 LENS_IDS = {"speed": "speed", "precision": "prec"}
 QUERIES = {"both": "Triton matrix multiplication tiling warps pipeline stages", "speed": "FP16 accumulation throughput tensor cores",
            "precision": "accumulation numerical error precision bound"}
 MAX_PER_LENS = 3
+DIRECTIVE_GAP_S = 10.0
+MAX_DIRECTIVES = 6
 
 
 @dataclass
@@ -48,7 +52,8 @@ class Hyp:
     note: str | None = None
     run: str | None = None
     metrics: Metrics | None = None
-    base_ms: float | None = None
+    speedup: float | None = None
+    noise: float = 0.0
     judgment: Judgment | None = None
     history: list[str] = field(default_factory=list)
     bounds: list[dict] = field(default_factory=list)
@@ -74,7 +79,7 @@ class Orchestrator:
     context(query) -> [{id, title, excerpt}] reads Papiers, optional."""
 
     def __init__(self, engine, ask, log: Log, session: str, fast: str, strong: str, band: float,
-                 main_iters=2, branch_iters=3, idle_s=120.0, context=None, help_deadline_s=45.0):
+                 main_iters=2, branch_iters=3, idle_s=120.0, context=None, help_deadline_s=45.0, max_hyps=None, retry_s=30.0):
         self.engine, self.ask, self.log, self.session = engine, ask, log, session
         self.fast, self.strong, self.band = fast, strong, band
         self.main_iters, self.branch_iters, self.idle_s = main_iters, branch_iters, idle_s
@@ -88,6 +93,8 @@ class Orchestrator:
         self.context = context
         self.read: dict[str, list] = {}
         self.help_deadline_s = help_deadline_s
+        self.max_hyps, self.retry_s = max_hyps, retry_s
+        self.retry = threading.Event()
         self.helps: dict[str, dict] = {}  # id -> {help, branch, t, answered, expired}
         self.hints: dict[str, tuple[str, str]] = {}  # branch -> (suggestion, note for the hypothesis)
         self.extra: dict[str, int] = {}  # branch -> iterations added by a help answer
@@ -98,9 +105,15 @@ class Orchestrator:
 
     def command(self, cmd: dict):
         self.commands.put(cmd)
+        if cmd["type"] in ("retry", "stop"):
+            self.retry.set()  # wakes a loop that is waiting out a model failure
 
     def stop(self):
         self.stopped = True
+        self.retry.set()
+
+    def capped(self):
+        return self.max_hyps is not None and len(self.hyps) >= self.max_hyps
 
     def run(self):
         self.start()
@@ -113,7 +126,7 @@ class Orchestrator:
             if b:
                 self.iterate(b)
                 idle = time.monotonic()
-            elif time.monotonic() - idle > self.idle_s and not self.pending():
+            elif (self.capped() or time.monotonic() - idle > self.idle_s) and not self.pending():
                 break
             else:
                 time.sleep(0.1)
@@ -136,8 +149,7 @@ class Orchestrator:
     def finish(self):
         ledger = [{"hypothesis": h.id, "verdict": h.judgment.verdict, "history": h.history} for h in self.hyps if h.judgment]
         best = self.best_run()
-        out = {"run": best.run, "vs_naive": round(self.naive.latency_ms / best.metrics.latency_ms, 2),
-               "vs_eager": round(self.eager.latency_ms / best.metrics.latency_ms, 2)} if best else {"run": "naive", "vs_naive": 1.0, "vs_eager": round(self.eager.latency_ms / self.naive.latency_ms, 2)}
+        out = {"run": best.run, "vs_naive": round(best.metrics.speedups["naive"], 2), "vs_eager": round(best.metrics.speedups["eager"], 2)} if best else {"run": "naive", "vs_naive": 1.0, "vs_eager": round(self.eager.latency_ms / self.naive.latency_ms, 2)}
         if ledger:
             self.export([("ledger", f"Hypothesis ledger {self.hyps[0].id} to {self.hyps[-1].id}", "ledger.md",
                           ex.ledger_md(self.hyps, out if best else None, self.naive.latency_ms, self.eager.latency_ms))]
@@ -155,13 +167,24 @@ class Orchestrator:
                 self.add_directive(cmd["lens"], cmd["text"])
             elif cmd["type"] == "answer_help":
                 self.answer(cmd)
+            elif cmd["type"] == "stop":
+                self.log.emit("agent_log", text="Stopped by the presenter. Finishing the session with what is logged so far.")
+                self.stop()
+            elif cmd["type"] in ("retry", "start"):
+                self.retry.set()
             else:
                 self.log.emit("agent_log", text=f"Received {cmd['type']}, which this build does not act on yet.")
         return handled
 
     def add_directive(self, lens, text):
+        now = self.log.clock() - self.log.t0
+        recent = [x for x in self.directives if x["lens"] == lens and now - x["at"] < DIRECTIVE_GAP_S]
+        if recent or len(self.directives) >= MAX_DIRECTIVES:
+            why = f"another {lens} directive arrived less than {DIRECTIVE_GAP_S:.0f} s ago" if recent else f"the session already has {MAX_DIRECTIVES} directives"
+            self.log.emit("agent_log", text=f"Ignored a {lens} directive ({why}): {text[:80]}")
+            return
         d = {"id": f"d{len(self.directives) + 1}", "lens": lens, "text": text, **hyp.directive(lens, text)}
-        self.directives.append(d)
+        self.directives.append(d | {"at": now})
         self.log.emit("directive_added", directive=d)
         if lens == "speed":
             self.log.emit("agent_log", text=f"Speed lens bound assigned: max error under {sci(d['threshold'])} on the standard batch for Speed branches "
@@ -183,7 +206,7 @@ class Orchestrator:
             if not (j and j.verdict == "confirmed" and j.provisional):
                 continue
             bound = {"standard": d["threshold"], "adversarial": d["threshold"], "set_by": "precision"}
-            new = judge(h.prediction, h.metrics, h.base_ms, self.band, d["threshold"], d["threshold"])
+            new = judge(h.prediction, h.metrics, h.speedup, h.noise, d["threshold"], d["threshold"])
             if new.verdict == j.verdict and new.provisional == j.provisional:
                 continue
             self.set_verdict(h, new, bound)
@@ -216,6 +239,8 @@ class Orchestrator:
                   f"Pivot from the {h.id} post-mortem: drop {ruled_out(h.params, self.start_point(b.id)[0])} and keep the rest.")
 
     def next_branch(self):
+        if self.capped() or self.stopped:
+            return None
         live = [b for b in self.branches.values() if b.status == "running"]
         return min(live, key=lambda b: b.iters) if live else None
 
@@ -247,11 +272,13 @@ class Orchestrator:
             return
         self.hyps.append(h)
         self.log.emit("hypothesis_proposed", hypothesis=h.dict())
-        self.measure(h)
         best = self.best_run(b.id)
-        h.base_ms = self.naive.latency_ms if h.prediction["vs"] == "naive" or not best else best.metrics.latency_ms
+        ref = "parent" if h.prediction["vs"] == "parent_best" and best else "naive"
+        self.measure(h, best.params if ref == "parent" else None)
+        h.speedup = h.metrics.speedups.get(ref)
+        h.noise = max(self.band, h.metrics.spreads.get(ref, 0.0))
         bound = self.bounds(b.lens)
-        self.set_verdict(h, judge(h.prediction, h.metrics, h.base_ms, self.band, bound["standard"], bound["adversarial"]), bound)
+        self.set_verdict(h, judge(h.prediction, h.metrics, h.speedup, h.noise, bound["standard"], bound["adversarial"]), bound)
         v = h.judgment.verdict
 
         # Only correctness failures end a branch with a post-mortem and a pivot. A missed speedup is a normal miss.
@@ -420,7 +447,9 @@ class Orchestrator:
                               + [f"Papiers {n['id']} ({n['title']}): {n['excerpt']}" for n in notes], self.bounds(b.lens)["standard"])
         why = ""
         for attempt in range(3):
-            text = self.ask(messages, self.fast, f"{b.id}-{b.iters}-{attempt}")
+            text = self.ask_or_wait(messages, f"{b.id}-{b.iters}-{attempt}", b.id)
+            if text is None:
+                return None
             h, why = hyp.parse(text)
             if h and json.dumps(h["params"].dict(), sort_keys=True) in tried_all:
                 h, why = None, "that configuration was already tried"
@@ -449,19 +478,42 @@ class Orchestrator:
                 self.log.emit("papiers_context", query=query, note={"id": n["id"], "title": n["title"], "excerpt": n["excerpt"]})
         return self.read[query]
 
+    def ask_or_wait(self, messages, tag, branch):
+        """Calls the fast model. On a timeout or API error the session shows it and waits for a retry command, or retries by
+        itself after retry_s, so it never looks frozen. Returns None if the presenter stops the session."""
+        while not self.stopped:
+            try:
+                return self.ask(messages, self.fast, tag)
+            except Exception as e:  # noqa: BLE001, any model failure becomes a visible, retryable state
+                kind = "llm_timeout" if "timeout" in type(e).__name__.lower() else "llm_error"
+                self.log.emit("agent_error", kind=kind, branch=branch, retry_in_s=int(self.retry_s),
+                              text=f"The hypothesis model failed ({type(e).__name__}: {str(e)[:120]}). Retrying in {self.retry_s:.0f} s or on retry.")
+                self.retry.clear()
+                self.retry.wait(self.retry_s)
+                self.drain()
+        return None
+
     def new_hyp(self, b, claim, prediction, params, note):
         # the error bound in the prediction is the lens bound, the agent cannot loosen it
         bound = self.bounds(b.lens)
         return Hyp(f"H{len(self.hyps)}", b.id, claim, prediction | {"max_error": bound["standard"], "bound": bound}, params, note)
 
-    def measure(self, h: Hyp):
+    def measure(self, h: Hyp, parent: Params | None):
+        """Times the candidate interleaved with naive, eager and, when it has one, its parent best, all in one child process."""
         self.runs += 1
         h.run = f"r{self.runs}"
         self.log.emit("run_started", run=h.run, branch=h.branch, hypothesis=h.id)
-        h.metrics = self.engine({"target": "triton", "params": h.params.dict()}, f"{self.session}/{h.id}-{h.run}")
-        if h.metrics.error:
+        refs = {"naive": {"target": "triton", "params": NAIVE.dict()}, "eager": {"target": "eager"}}
+        if parent:
+            refs["parent"] = {"target": "triton", "params": parent.dict()}
+        h.metrics = self.engine({"target": "triton", "params": h.params.dict(), "refs": refs}, f"{self.session}/{h.id}-{h.run}")
+        if h.metrics.timed_out:
+            self.log.emit("agent_error", kind="harness_timeout", branch=h.branch,
+                          text=f"{h.run} hit the {TIMEOUT_S} s harness timeout and was killed. It counts as a failed run.")
+        elif h.metrics.error:
             self.log.emit("agent_log", text=f"{h.run} failed: {h.metrics.error[:300]}")
-        self.log.emit("run_finished", run={"id": h.run, "branch": h.branch, "hypothesis": h.id, "params": h.params.dict(), "metrics": h.metrics.contract()})
+        self.log.emit("run_finished", run={"id": h.run, "branch": h.branch, "hypothesis": h.id, "params": h.params.dict(), "metrics": h.metrics.contract()},
+                      **({"error": "timed out" if h.metrics.timed_out else h.metrics.error[:300]} if h.metrics.error else {}))
 
     def set_verdict(self, h: Hyp, j: Judgment, bound: dict):
         h.judgment = j
@@ -491,7 +543,7 @@ class Orchestrator:
             observed = f"The run failed: {(m.error or '')[:200]}"
             sweep = []
         else:
-            observed = f"Speedup of {h.base_ms / m.latency_ms:.2f}x, standard error {sci(m.max_error)}, adversarial error {sci(m.adv_error)}."
+            observed = f"Speedup of {h.speedup:.2f}x (+/- {h.speedup * h.noise:.2f}x), standard error {sci(m.max_error)}, adversarial error {sci(m.adv_error)}."
             s = self.engine({"target": "sweep", "params": h.params.dict(), "ks": SWEEP_KS}, f"{self.session}/{h.id}-sweep")
             sweep = [{"k": k, "adv_error": s.errors[f"k{k}"]} for k in SWEEP_KS if f"k{k}" in s.errors]
         trend = (f"Adversarial error goes from {sci(sweep[0]['adv_error'])} at K={sweep[0]['k']} to {sci(sweep[-1]['adv_error'])} at K={sweep[-1]['k']}"

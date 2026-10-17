@@ -1,18 +1,21 @@
 """uv run uvicorn server.app:app --port 8000
 
-One research session per server process. The orchestrator runs in a background thread. Each WebSocket client first gets the
-session history as one array (it starts with session_started, so the UI resets), then every new event, and may send Command objects.
+One research session per server process. The session waits for a start command from the UI (or starts at once with AUTOSTART=1)
+and then runs the orchestrator in a background thread. Each WebSocket client first gets the session history as one array, then
+every new event, and may send Command objects. GET /preflight checks the GPU, the NIM key and the Papiers token for real.
 """
 
 import asyncio
 import json
 import os
+import subprocess
 import threading
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-COMMANDS = {"add_directive", "answer_help", "approve_hybrid"}
+COMMANDS = {"add_directive", "answer_help", "approve_hybrid", "start", "stop", "retry"}
 
 
 def valid(cmd):
@@ -23,20 +26,71 @@ def valid(cmd):
     return True
 
 
-def create(factory=None):
+def check_gpu():
+    out = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True, timeout=10)
+    return out.returncode == 0 and bool(out.stdout.strip()), out.stdout.strip() or out.stderr.strip()[:200]
+
+
+def check_nim():
+    from agent.llm import BASE_URL
+    key = os.environ.get("NVIDIA_API_KEY")
+    if not key:
+        return False, "NVIDIA_API_KEY is not set"
+    r = httpx.get(f"{BASE_URL}/models", headers={"Authorization": f"Bearer {key}"}, timeout=10)
+    return r.status_code == 200, f"{BASE_URL}/models answered {r.status_code}"
+
+
+def check_gemini():
+    from agent.llm import GEMINI_URL, available
+    if not available("gemini"):
+        return False, "GEMINI_API_KEY is not set, NIM is used"
+    r = httpx.get(f"{GEMINI_URL}models", headers={"Authorization": f"Bearer {os.environ['GEMINI_API_KEY']}"}, timeout=10)
+    return r.status_code == 200, f"{GEMINI_URL}models answered {r.status_code}"
+
+
+def check_papiers():
+    from agent import papiers
+    exe = papiers.binary()
+    if not exe:
+        return False, "papiers CLI not found"
+    papiers.search("Triton", limit=1)
+    return True, "search answered"
+
+
+CHECKS = {"gpu": check_gpu, "gemini": check_gemini, "nim": check_nim, "papiers": check_papiers}
+
+
+def run_check(fn):
+    try:
+        ok, detail = fn()
+    except Exception as e:  # noqa: BLE001, a failed check is reported, not raised
+        ok, detail = False, f"{type(e).__name__}: {str(e)[:200]}"
+    return {"ok": ok, "detail": detail}
+
+
+def create(factory=None, checks=CHECKS, autostart=None):
     state = {}
+    autostart = os.environ.get("AUTOSTART") == "1" if autostart is None else autostart
+
+    def start():
+        if state.get("thread"):
+            return
+        state["thread"] = threading.Thread(target=state["orch"].run, daemon=True)
+        state["thread"].start()
 
     @asynccontextmanager
     async def lifespan(app):
         if factory is None:
             from agent import session
+            cap = os.environ.get("MAX_HYPS", "1")
             orch = session.new(main_iters=int(os.environ.get("MAIN_ITERS", "2")), branch_iters=int(os.environ.get("BRANCH_ITERS", "3")),
-                               idle_s=float(os.environ.get("IDLE_S", "600")))
+                               idle_s=float(os.environ.get("IDLE_S", "600")), max_hyps=int(cap) if cap else None,
+                               help_deadline_s=float(os.environ.get("HELP_DEADLINE_S", "45")))
         else:
             orch = factory()
         state["orch"] = orch
-        thread = threading.Thread(target=orch.run, daemon=True)
-        thread.start()
+        if autostart:
+            start()
         yield
         orch.stop()
 
@@ -45,7 +99,11 @@ def create(factory=None):
     @app.get("/health")
     def health():
         orch = state["orch"]
-        return {"session": orch.session, "events": len(orch.log.events), "log": str(orch.log.path)}
+        return {"session": orch.session, "events": len(orch.log.events), "log": str(orch.log.path), "started": bool(state.get("thread"))}
+
+    @app.get("/preflight")
+    def preflight():
+        return {"started": bool(state.get("thread")), "checks": {name: run_check(fn) for name, fn in checks.items()}}
 
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
@@ -69,7 +127,11 @@ def create(factory=None):
                     cmd = json.loads(await sock.receive_text())
                 except json.JSONDecodeError:
                     continue
-                if valid(cmd):
+                if not valid(cmd):
+                    continue
+                if cmd["type"] == "start":
+                    start()
+                else:
                     orch.command(cmd)
         except WebSocketDisconnect:
             pass

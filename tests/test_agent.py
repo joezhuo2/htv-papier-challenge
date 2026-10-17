@@ -36,6 +36,14 @@ class Engine:
 
     def __call__(self, spec, run_id):
         self.calls.append((spec, run_id))
+        m = self.one(spec)
+        if spec.get("refs") and m.latency_ms:
+            # same-window speedups, noiseless in the fake
+            m = Metrics.from_dict(m.dict() | {"speedups": {k: self.one(r).latency_ms / m.latency_ms for k, r in spec["refs"].items()},
+                                              "spreads": {k: 0.0 for k in spec["refs"]}})
+        return m
+
+    def one(self, spec):
         if spec["target"] == "eager":
             return self.table["eager"]
         if spec["target"] == "sweep":
@@ -55,7 +63,7 @@ def h(params, min_speedup=1.3, vs="parent_best", claim="A claim."):
 class Asker:
     """Fast model answers come from a script in order. The strong model fails unless strong_ok, which exercises the factual fallback."""
 
-    def __init__(self, *script, strong_ok=False, default=None):
+    def __init__(self, *script, strong_ok=False, default="no json"):
         self.script, self.strong_ok, self.default, self.calls = list(script), strong_ok, default, []
 
     def __call__(self, messages, model, tag):
@@ -74,7 +82,7 @@ class Asker:
 
 def make(tmp_path, asker, engine=None, **kw):
     log = Log(tmp_path / "events.jsonl")
-    return Orchestrator(engine or Engine(), asker, log, "sessions/test", "fast", "strong", BAND, idle_s=0.3, **kw)
+    return Orchestrator(engine or Engine(), asker, log, "sessions/test", "fast", "strong", BAND, **({"retry_s": 0.05, "idle_s": 0.3} | kw))
 
 
 def types(o):
@@ -91,7 +99,7 @@ REQUIRED = {
     "run_started": {"run", "branch", "hypothesis"}, "run_finished": {"run"},
     "verdict": {"hypothesis", "verdict", "provisional", "reason", "checks", "bound"}, "post_mortem": {"post_mortem"}, "summary": {"summary"},
     "agent_log": {"text"}, "session_finished": {"ledger", "best"}, "papiers_context": set(), "findings_exported": {"items"},
-    "help_requested": {"help"}, "help_answered": {"help", "option", "by"}, "plan_change": {"help", "text"},
+    "help_requested": {"help"}, "help_answered": {"help", "option", "by"}, "plan_change": {"help", "text"}, "agent_error": {"kind", "text"},
 }
 HELP_KEYS = {"id", "target", "question", "evidence", "options", "default", "blocks", "deadline_s", "what_changes"}
 SUMMARY_KEYS = {"branch", "tried", "moved", "verdict", "confidence", "confidence_reason", "uncertainties", "would_change_mind", "next_step"}
@@ -107,7 +115,7 @@ def assert_contract(events):
         if e["type"] == "summary":
             assert set(e["summary"]) == SUMMARY_KEYS
         if e["type"] == "run_finished":
-            assert set(e["run"]["metrics"]) == {"latency_ms", "tflops", "max_error", "adv_error", "vram_mb", "compiled_ok", "correct_ok"}
+            assert set(e["run"]["metrics"]) - {"speedups", "spreads"} == {"latency_ms", "tflops", "max_error", "adv_error", "vram_mb", "compiled_ok", "correct_ok"}
         if e["type"] in ("verdict", "hypothesis_proposed"):
             b = e["bound"] if e["type"] == "verdict" else e["hypothesis"]["prediction"]["bound"]
             assert set(b) == {"standard", "adversarial", "set_by"} and b["set_by"] in ("speed", "precision", "default")
@@ -123,36 +131,36 @@ def assert_contract(events):
 
 def test_verdict_confirmed_rejected_inconclusive():
     pred = {"min_speedup": 2.0, "vs": "naive", "max_error": 1e-3}
-    assert judge(pred, met(0.642), 1.891, BAND, 1e-3, None).verdict == "confirmed"
-    assert judge(pred, met(0.95), 1.891, BAND, 1e-3, None).verdict == "inconclusive"
-    j = judge(pred, met(1.2), 1.891, BAND, 1e-3, None)
+    assert judge(pred, met(0.642), 1.891 / 0.642, BAND, 1e-3, None).verdict == "confirmed"
+    assert judge(pred, met(0.95), 1.891 / 0.95, BAND, 1e-3, None).verdict == "inconclusive"
+    j = judge(pred, met(1.2), 1.891 / 1.2, BAND, 1e-3, None)
     assert j.verdict == "rejected" and j.checks[0].passed is False
 
 
 def test_verdict_rejects_on_error_and_failed_runs_regardless_of_speed():
     pred = {"min_speedup": 1.3, "vs": "parent_best", "max_error": 1e-3}
-    j = judge(pred, met(0.45, err=1.3e-2), 0.642, BAND, 1e-3, None)
+    j = judge(pred, met(0.45, err=1.3e-2), 0.642 / 0.45, BAND, 1e-3, None)
     assert j.verdict == "rejected" and [c.passed for c in j.checks] == [True, False]
-    assert judge(pred, Metrics(error="timeout"), 0.642, BAND, 1e-3, None).verdict == "rejected"
+    assert judge(pred, Metrics(error="timeout"), 0.642 / 1, BAND, 1e-3, None).verdict == "rejected"
 
 
 def test_verdict_adversarial_is_provisional_until_a_precision_bound():
     pred = {"min_speedup": 1.2, "vs": "parent_best", "max_error": 1e-3}
     m = met(0.5, err=5e-4, adv=3e-3)
-    j = judge(pred, m, 0.642, BAND, 1e-3, None)
+    j = judge(pred, m, 0.642 / 0.5, BAND, 1e-3, None)
     assert (j.verdict, j.provisional) == ("confirmed", True)
-    j = judge(pred, m, 0.642, BAND, 1e-3, 1e-3)
+    j = judge(pred, m, 0.642 / 0.5, BAND, 1e-3, 1e-3)
     assert j.verdict == "rejected" and j.checks[-1].name == "adversarial max error"
 
 
 def test_speed_tolerance_makes_fp16_provisional_and_precision_rejects_it():
     pred = {"min_speedup": 1.3, "vs": "parent_best", "max_error": 2e-2}
     fp16 = met(0.45, err=1.3e-2, adv=7.1e-2)
-    j = judge(pred, fp16, 0.642, BAND, 2e-2, None)
+    j = judge(pred, fp16, 0.642 / 0.45, BAND, 2e-2, None)
     assert (j.verdict, j.provisional) == ("confirmed", True) and j.checks[1].predicted == "< 2.0e-2"
-    j = judge(pred, fp16, 0.642, BAND, 1e-3, 1e-3)
+    j = judge(pred, fp16, 0.642 / 0.45, BAND, 1e-3, 1e-3)
     assert j.verdict == "rejected" and [c.passed for c in j.checks] == [True, False, False]
-    assert (judge(pred, met(0.6), 0.642, BAND, 2e-2, None).provisional) is False
+    assert (judge(pred, met(0.6), 0.642 / 0.6, BAND, 2e-2, None).provisional) is False
 
 
 # ---- parsing ----
@@ -185,7 +193,7 @@ def test_one_autonomous_iteration(tmp_path):
     assert [t for t in types(o) if t != "agent_log"] == ["session_started", "hypothesis_proposed", "run_started", "run_finished",
                                                           "verdict", "summary", "branch_status", "findings_exported", "session_finished"]
     v = of(o, "verdict")[0]
-    assert v["verdict"] == "confirmed" and v["checks"][0]["observed"] == "2.95x"
+    assert v["verdict"] == "confirmed" and v["checks"][0]["observed"] == "2.95x (noise +/- 0.05x)"
     assert of(o, "session_finished")[0]["best"] == {"run": "r1", "vs_naive": 2.95, "vs_eager": 1.04}
     assert_contract(o.log.events)
     lines = (tmp_path / "events.jsonl").read_text().splitlines()
@@ -295,7 +303,7 @@ def test_websocket_sends_history_then_streams_and_accepts_commands(tmp_path):
         return Gated(Engine(), Asker(h(P, 2.0, "naive"), default="no json"), Log(tmp_path / "events.jsonl"), "sessions/test", "fast", "strong", BAND,
                      main_iters=1, idle_s=1.0)
 
-    with TestClient(create(factory)) as client:
+    with TestClient(create(factory, autostart=True)) as client:
         deadline = time.time() + 5
         while client.get("/health").json()["events"] < 3 and time.time() < deadline:
             time.sleep(0.02)
@@ -517,3 +525,124 @@ def test_seeded_variant_still_runs_on_speed_when_fp16_was_only_tried_on_main(tmp
     on_speed = [e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["branch"] == "speed"]
     variant = next(x for x in on_speed if x["params"]["acc"] == "fp16")
     assert "Harness variant" in variant["note"] and variant["prediction"]["min_speedup"] == 1.2
+
+
+def test_runs_request_same_window_references_including_the_parent(tmp_path):
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.05)), main_iters=2)
+    o.run()
+    specs = [spec for spec, _ in o.engine.calls if spec.get("refs")]
+    assert set(specs[0]["refs"]) == {"naive", "eager"}
+    assert specs[1]["refs"]["parent"]["params"] == P
+    rf = of(o, "run_finished")[0]["run"]["metrics"]
+    assert set(rf["speedups"]) == {"naive", "eager"} and rf["spreads"]["naive"] == 0.0
+
+
+
+# ---- live controls ----
+
+class Flaky(Asker):
+    """Times out on the first fast-model call, then answers from the script."""
+
+    def __init__(self, *script):
+        super().__init__(*script)
+        self.failed = False
+
+    def __call__(self, messages, model, tag):
+        if model == "fast" and not self.failed:
+            self.failed = True
+            raise TimeoutError("read timed out")
+        return super().__call__(messages, model, tag)
+
+
+def test_llm_timeout_is_visible_and_retried(tmp_path):
+    o = make(tmp_path, Flaky(h(P, 2.0, "naive")), main_iters=1, retry_s=0.05)
+    o.run()
+    err = of(o, "agent_error")[0]
+    assert err["kind"] == "llm_timeout" and err["branch"] == "main" and err["retry_in_s"] == 0
+    assert of(o, "verdict")[0]["verdict"] == "confirmed"
+    assert_contract(o.log.events)
+
+
+def test_retry_command_wakes_a_waiting_session(tmp_path):
+    o = make(tmp_path, Flaky(h(P, 2.0, "naive")), main_iters=1, retry_s=30)
+    drive(o, [(lambda: bool(of(o, "agent_error")), {"type": "retry"})], timeout=5)
+    assert of(o, "verdict")
+
+
+def test_harness_timeout_is_a_visible_failed_run(tmp_path):
+    eng = Engine()
+    real = eng.one
+    eng.one = lambda spec: Metrics(error="timeout", timed_out=True) if spec.get("params", {}).get("warps") == 16 else real(spec)
+    o = make(tmp_path, Asker(h(P | {"warps": 16}, 2.0, "naive")), engine=eng, main_iters=1)
+    o.run()
+    assert of(o, "agent_error")[0]["kind"] == "harness_timeout"
+    assert of(o, "run_finished")[0]["error"] == "timed out"
+    assert of(o, "verdict")[0]["verdict"] == "rejected"
+
+
+def test_stop_finishes_the_session(tmp_path):
+    o = make(tmp_path, Flaky(h(P, 2.0, "naive")), main_iters=1, retry_s=30)
+    drive(o, [(lambda: bool(of(o, "agent_error")), {"type": "stop"})], timeout=5)
+    assert types(o)[-1] == "session_finished"
+    assert any("Stopped by the presenter" in e["text"] for e in of(o, "agent_log"))
+
+
+def test_iteration_cap_and_directive_rate_limit(tmp_path):
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.05)), main_iters=3, max_hyps=1, idle_s=30)
+    o.command(SPEED)
+    o.command(SPEED | {"text": "Faster again."})
+    o.run()
+    assert len(of(o, "hypothesis_proposed")) == 1
+    assert len(of(o, "directive_added")) == 1
+    assert any("Ignored a speed directive" in e["text"] for e in of(o, "agent_log"))
+    assert types(o)[-1] == "session_finished"
+
+
+# ---- providers ----
+
+def test_gemini_first_then_nim_fallback_is_logged(tmp_path, monkeypatch):
+    from agent import session
+
+    class FakeClient:
+        def __init__(self, provider, **kw):
+            self.provider = provider
+
+        def complete(self, messages, model, **kw):
+            if self.provider == "gemini":
+                raise TimeoutError("gemini slow")
+            return {"text": f"from {model}"}
+
+    monkeypatch.setattr(session, "Client", lambda timeout, max_retries, provider: FakeClient(provider))
+    log = Log(tmp_path / "events.jsonl")
+    ask = session.asker(log, {"fast": [("gemini", "g-fast"), ("nim", "n-fast")]})
+    assert ask([], "fast", "t") == "from n-fast"
+    assert "g-fast failed (TimeoutError), answered by n-fast on nim." in log.events[-1]["text"]
+
+
+def test_provider_chain_prefers_gemini_only_when_its_key_is_set(monkeypatch):
+    from agent import session
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    assert [p for p, _ in session.chains()["fast"]] == ["gemini", "nim"]
+    monkeypatch.delenv("GEMINI_API_KEY")
+    assert [p for p, _ in session.chains()["strong"]] == ["nim"]
+
+
+def test_preflight_reports_each_check_and_start_command_starts_the_session(tmp_path):
+    from fastapi.testclient import TestClient
+    from server.app import create
+
+    def boom():
+        raise RuntimeError("no GPU here")
+
+    checks = {"gpu": boom, "nim": lambda: (True, "200")}
+    factory = lambda: make(tmp_path, Asker(h(P, 2.0, "naive")), main_iters=1, idle_s=5)
+    with TestClient(create(factory, checks=checks, autostart=False)) as client:
+        pf = client.get("/preflight").json()
+        assert pf["started"] is False
+        assert pf["checks"]["gpu"] == {"ok": False, "detail": "RuntimeError: no GPU here"}
+        assert pf["checks"]["nim"] == {"ok": True, "detail": "200"}
+        assert client.get("/health").json()["events"] == 0
+        with client.websocket_connect("/ws") as ws:
+            ws.send_text(json.dumps({"type": "start"}))
+            assert json.loads(ws.receive_text())["type"] == "agent_log"
+        assert client.get("/health").json()["started"] is True
