@@ -38,7 +38,7 @@ def chains():
 
 
 def asker(debug, roles=None):
-    """ask(messages, role, tag): tries each live provider for the role in turn. A route that fails is skipped for DOWN_S, or for the
+    """ask(messages, role, tag): tries each live (provider, model) route for the role in turn. A route that fails is skipped for DOWN_S, or for the
     rest of the session on a permission or bad request error, so a broken gateway costs one failed call, not one per call.
     Failovers are written to the debug file, not the replay."""
     roles = roles or chains()
@@ -50,7 +50,7 @@ def asker(debug, roles=None):
 
     def ask(messages, role, tag):
         chain = roles[role]
-        live = [x for x in chain if down.get(x[0], 0) <= time.monotonic()] or chain[-1:]
+        live = [x for x in chain if down.get(x, 0) <= time.monotonic()] or chain[-1:]
         last = None
         for provider, model in live:
             t = time.monotonic()
@@ -64,7 +64,7 @@ def asker(debug, roles=None):
             except Exception as e:  # noqa: BLE001, try the next provider, the last failure propagates
                 last = e
                 fatal = type(e).__name__ in FATAL
-                down[provider] = float("inf") if fatal else time.monotonic() + DOWN_S
+                down[provider, model] = float("inf") if fatal else time.monotonic() + DOWN_S  # per route: a quota on one model leaves the others usable
                 note(f"{role}: {model} on {provider} failed after {time.monotonic() - t:.1f} s ({type(e).__name__}: {str(e)[:160]}), "
                      + ("dropped for the session" if fatal else f"skipped for {DOWN_S:.0f} s"))
         raise last

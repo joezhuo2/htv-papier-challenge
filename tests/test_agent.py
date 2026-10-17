@@ -666,6 +666,22 @@ def test_gemini_first_then_nim_fallback_is_logged(tmp_path, monkeypatch):
     assert text.count("g-fast on gemini failed") == 1  # the second call skips the failed route
 
 
+def test_a_failed_route_does_not_take_down_other_models_on_the_same_provider(tmp_path, monkeypatch):
+    from agent import session
+
+    class FakeClient:
+        def complete(self, messages, model, **kw):
+            if model == "g-strong":
+                raise TimeoutError("quota")
+            return {"text": f"from {model}"}
+
+    monkeypatch.setattr(session, "Client", lambda timeout, max_retries, provider: FakeClient())
+    ask = session.asker(tmp_path / "debug.log", {"fast": [("gemini", "g-fast"), ("nim", "n-fast")], "strong": [("gemini", "g-strong")]})
+    with pytest.raises(TimeoutError):
+        ask([], "strong", "t")
+    assert ask([], "fast", "t") == "from g-fast"
+
+
 def test_provider_chain_tries_omniroute_then_gemini_when_its_key_is_set_then_nim(monkeypatch):
     from agent import session
     monkeypatch.delenv("OMNIROUTE", raising=False)
