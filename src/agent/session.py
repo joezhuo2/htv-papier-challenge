@@ -50,7 +50,10 @@ def asker(log, roles=None):
 
 
 def new(sid=None, **kw) -> Orchestrator:
-    sid = sid or time.strftime("%Y%m%d-%H%M%S")
+    if not sid:
+        sid = time.strftime("%Y%m%d-%H%M%S")
+        while (runner.RUNS / "sessions" / sid).exists():  # a restart within the same second
+            sid += "b"
     log = Log(runner.RUNS / "sessions" / sid / "events.jsonl")
     return Orchestrator(lambda spec, run_id: runner.run(spec, run_id=run_id), asker(log), log, f"sessions/{sid}",
                         "fast", "strong", noise.band(), context=papiers.search if papiers.binary() else None,

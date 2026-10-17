@@ -73,6 +73,10 @@ def ruled_out(p: Params, base: Params):
     return ", ".join(f"{k}={getattr(p, k)}" for k in keys) or f"the configuration {p.dict()}"
 
 
+class Stopped(Exception):
+    pass
+
+
 class Orchestrator:
     """engine(spec, run_id) -> Metrics runs one experiment (harness.runner.run in production).
     ask(messages, model, tag) -> str is the LLM. fast and strong are model ids.
@@ -107,8 +111,14 @@ class Orchestrator:
     # ---- public, thread safe ----
 
     def command(self, cmd: dict):
+        if cmd["type"] == "stop":
+            # acts at once instead of between iterations, so an in-flight model call does not delay it
+            if not self.stopped:
+                self.log.emit("agent_log", text="Stopped by the presenter. Finishing the session with what is logged so far.")
+            self.stop()
+            return
         self.commands.put(cmd)
-        if cmd["type"] in ("retry", "stop"):
+        if cmd["type"] == "retry":
             self.retry.set()  # wakes a loop that is waiting out a model failure
 
     def stop(self):
@@ -172,9 +182,6 @@ class Orchestrator:
                 self.add_directive(cmd["lens"], cmd["text"])
             elif cmd["type"] == "answer_help":
                 self.answer(cmd)
-            elif cmd["type"] == "stop":
-                self.log.emit("agent_log", text="Stopped by the presenter. Finishing the session with what is logged so far.")
-                self.stop()
             elif cmd["type"] in ("retry", "start"):
                 self.retry.set()
             else:
@@ -272,6 +279,8 @@ class Orchestrator:
     def iterate(self, b: Branch):
         b.iters += 1
         h = self.propose(b)
+        if self.stopped:
+            return
         if not h:
             self.close(b, "done")
             return
@@ -489,7 +498,9 @@ class Orchestrator:
         itself after retry_s, so it never looks frozen. Returns None if the presenter stops the session."""
         while not self.stopped:
             try:
-                return self.ask(messages, self.fast, tag)
+                return self.asking(messages, self.fast, tag)
+            except Stopped:
+                return None
             except Exception as e:  # noqa: BLE001, any model failure becomes a visible, retryable state
                 kind = "llm_timeout" if "timeout" in type(e).__name__.lower() else "llm_error"
                 self.log.emit("agent_error", kind=kind, branch=branch, retry_in_s=int(self.retry_s),
@@ -530,12 +541,34 @@ class Orchestrator:
 
     # ---- explanation ----
 
+    def asking(self, messages, model, tag):
+        """self.ask in a worker thread, abandoned when the presenter stops the session. Raises Stopped then."""
+        out = {}
+
+        def work():
+            try:
+                out["text"] = self.ask(messages, model, tag)
+            except Exception as e:  # noqa: BLE001, re-raised in the caller's thread
+                out["error"] = e
+
+        t = threading.Thread(target=work, daemon=True)
+        t.start()
+        while t.is_alive():
+            if self.stopped:
+                raise Stopped
+            t.join(0.1)
+        if "error" in out:
+            raise out["error"]
+        return out["text"]
+
     def ask_json(self, messages, model, tag, keys):
         """LLM prose for the explanation layer. Falls back to None on any API or format failure, the caller has a factual default."""
         try:
-            text = self.ask(messages, model, tag)
+            text = self.asking(messages, model, tag)
             found = re.search(r"\{.*\}", text, re.DOTALL)
             d = json.loads(found.group(0)) if found else {}
+        except Stopped:
+            return None
         except Exception as e:  # noqa: BLE001, a slow or failing model must not stop the research loop
             self.log.emit("agent_log", text=f"Explanation model unavailable ({type(e).__name__}), using the factual summary.")
             return None
@@ -550,7 +583,7 @@ class Orchestrator:
             sweep = []
         else:
             observed = f"Speedup of {h.speedup:.2f}x (+/- {h.speedup * h.noise:.2f}x), standard error {sci(m.max_error)}, adversarial error {sci(m.adv_error)}."
-            s = self.engine({"target": "sweep", "params": h.params.dict(), "ks": SWEEP_KS}, f"{self.session}/{h.id}-sweep")
+            s = Metrics() if self.stopped else self.engine({"target": "sweep", "params": h.params.dict(), "ks": SWEEP_KS}, f"{self.session}/{h.id}-sweep")
             sweep = [{"k": k, "adv_error": s.errors[f"k{k}"]} for k in SWEEP_KS if f"k{k}" in s.errors]
         trend = (f"Adversarial error goes from {sci(sweep[0]['adv_error'])} at K={sweep[0]['k']} to {sci(sweep[-1]['adv_error'])} at K={sweep[-1]['k']}"
                  f"{f', above the strict {sci(BOUND)} bound at every K' if all(x['adv_error'] >= BOUND for x in sweep) else ''}." if sweep else "")

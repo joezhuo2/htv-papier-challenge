@@ -687,3 +687,43 @@ def test_prompt_quotes_the_measured_headroom():
     hr = noise.headroom()
     text = hyp.prompt({"id": "main", "label": "Baseline"}, [], {"params": P, "metrics": {}}, [], [], headroom=hr)[1]["content"]
     assert f"{hr['vs_naive']['median']:.2f}x faster than the naive start" in text and f"{hr['vs_eager']['median']:.2f}x vs PyTorch eager" in text
+
+
+def test_stop_acts_during_a_slow_model_call(tmp_path):
+    gate = threading.Event()
+
+    def slow(messages, model, tag):
+        gate.wait(10)
+        return h(P, 2.0, "naive")
+
+    o = make(tmp_path, slow, main_iters=3)
+    t = threading.Thread(target=o.run)
+    t.start()
+    deadline = time.time() + 5
+    while "session_started" not in types(o) and time.time() < deadline:
+        time.sleep(0.01)
+    time.sleep(0.2)
+    o.command({"type": "stop"})
+    t.join(2)
+    gate.set()
+    assert not t.is_alive()
+    assert types(o)[-1] == "session_finished" and "hypothesis_proposed" not in types(o)
+    assert [e["text"] for e in of(o, "agent_log")].count("Stopped by the presenter. Finishing the session with what is logged so far.") == 1
+
+
+def test_restart_replaces_a_stopped_session_with_one_waiting_for_start(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from server.app import create
+
+    made = []
+
+    def factory():
+        made.append(make(tmp_path / str(len(made)), Asker(h(P, 2.0, "naive"), default="no json"), main_iters=1, idle_s=5))
+        return made[-1]
+
+    with TestClient(create(factory, checks={}, autostart=True)) as client:
+        client.post("/restart")
+        assert len(made) == 2 and made[0].stopped and types(made[0])[-1] == "session_finished"
+        assert client.get("/health").json() | {} and client.get("/preflight").json()["started"] is False
+        assert made[1].log.events == []

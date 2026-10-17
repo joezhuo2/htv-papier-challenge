@@ -3,7 +3,7 @@
 One research session per server process. The session waits for a start command from the UI (or starts at once with AUTOSTART=1)
 and then runs the orchestrator in a background thread. The default start keeps the table demo cap (MAX_HYPS, default 1). A start
 with record: true is the recording mode: the full loop for up to RECORD_HYPS hypotheses (default 8) or until Stop, with the log
-saved as a replay. Each WebSocket client first gets the session history as one array, then
+saved as a replay. POST /restart stops the current session and replaces it with a new one waiting for Start. Each WebSocket client first gets the session history as one array, then
 every new event, and may send Command objects. GET /preflight checks the GPU, the NIM key and the Papiers token for real.
 """
 
@@ -70,8 +70,17 @@ def run_check(fn):
     return {"ok": ok, "detail": detail}
 
 
+def build():
+    from agent import session
+    cap = os.environ.get("MAX_HYPS", "1")
+    return session.new(main_iters=int(os.environ.get("MAIN_ITERS", "2")), branch_iters=int(os.environ.get("BRANCH_ITERS", "3")),
+                       idle_s=float(os.environ.get("IDLE_S", "600")), max_hyps=int(cap) if cap else None,
+                       help_deadline_s=float(os.environ.get("HELP_DEADLINE_S", "45")))
+
+
 def create(factory=None, checks=CHECKS, autostart=None):
-    state = {}
+    factory = factory or build
+    state = {"socks": set()}
     autostart = os.environ.get("AUTOSTART") == "1" if autostart is None else autostart
 
     record_hyps = int(os.environ.get("RECORD_HYPS", "8"))
@@ -88,19 +97,11 @@ def create(factory=None, checks=CHECKS, autostart=None):
 
     @asynccontextmanager
     async def lifespan(app):
-        if factory is None:
-            from agent import session
-            cap = os.environ.get("MAX_HYPS", "1")
-            orch = session.new(main_iters=int(os.environ.get("MAIN_ITERS", "2")), branch_iters=int(os.environ.get("BRANCH_ITERS", "3")),
-                               idle_s=float(os.environ.get("IDLE_S", "600")), max_hyps=int(cap) if cap else None,
-                               help_deadline_s=float(os.environ.get("HELP_DEADLINE_S", "45")))
-        else:
-            orch = factory()
-        state["orch"] = orch
+        state["orch"] = factory()
         if autostart:
             start()
         yield
-        orch.stop()
+        state["orch"].stop()
 
     app = FastAPI(lifespan=lifespan)
 
@@ -108,6 +109,21 @@ def create(factory=None, checks=CHECKS, autostart=None):
     def health():
         orch = state["orch"]
         return {"session": orch.session, "events": len(orch.log.events), "log": str(orch.log.path), "started": bool(state.get("thread")), "record": orch.record}
+
+    @app.post("/restart")
+    async def restart():
+        """Stops the current session (an in-flight harness run finishes first, at most about 25 s), disconnects every client and
+        starts over with a new session that waits for Start. Clients reload and reconnect to it."""
+        old, thread = state["orch"], state.pop("thread", None)
+        old.stop()
+        if thread:
+            await asyncio.to_thread(thread.join, 60)
+        if not (thread and thread.is_alive()):
+            old.log.close()
+        for sock in list(state["socks"]):
+            await sock.close()
+        state["orch"] = factory()
+        return {"session": state["orch"].session}
 
     @app.get("/preflight")
     def preflight():
@@ -118,6 +134,7 @@ def create(factory=None, checks=CHECKS, autostart=None):
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
         await sock.accept()
+        state["socks"].add(sock)
         orch = state["orch"]
         loop = asyncio.get_running_loop()
         out: asyncio.Queue = asyncio.Queue()
@@ -143,9 +160,10 @@ def create(factory=None, checks=CHECKS, autostart=None):
                     start(cmd.get("record") is True)
                 else:
                     orch.command(cmd)
-        except WebSocketDisconnect:
-            pass
+        except (WebSocketDisconnect, RuntimeError):
+            pass  # RuntimeError: the socket was closed by a restart
         finally:
+            state["socks"].discard(sock)
             sender.cancel()
             orch.log.unsubscribe(push)
 
