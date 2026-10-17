@@ -899,7 +899,7 @@ def test_directive_applies_while_a_model_call_is_in_flight(tmp_path):
 
 
 def test_a_duplicate_answer_is_ignored_silently_and_the_cap_reports_cut_promises(tmp_path):
-    o = help_session(tmp_path, max_hyps=3)
+    o = help_session(tmp_path, h(P | {"stages": 4}, 1.02), max_hyps=4)
     ans = {"type": "answer_help", "help": "hq1", "option": "tile_search", "by": "speed"}
     drive(o, [(judged(o, 1), SPEED), (asked(o), ans), (lambda: bool(of(o, "help_answered")), ans)])
     assert len(of(o, "help_answered")) == 1 and not any("Ignored an answer" in e["text"] for e in of(o, "agent_log"))
@@ -1439,3 +1439,22 @@ def test_a_hunch_gets_one_plan_change_at_directive_time_even_when_the_seed_runs_
                      "into the next hypothesis on that branch.")]
     hyps = [e["hypothesis"] for e in of(o, "hypothesis_proposed")]
     assert hyps[1]["params"]["acc"] == "fp16" and hyps[2]["note"].startswith("Hunch from the Speed lens in directive d1") and o.hunches["d1"] == "H2"
+
+
+def test_the_cap_ends_the_session_at_once_with_pending_help_reported_unanswered(tmp_path):
+    # main keeps running past the help request on speed (H3) and reaches the cap with H4
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.02), h(INCONCLUSIVE, 1.02), h(P | {"gelu": "approx"}, 1.02), default="no json"),
+             main_iters=3, branch_iters=2, help_deadline_s=30, max_hyps=5)
+    start = time.time()
+    drive(o, [(judged(o, 1), SPEED)])
+    assert time.time() - start < 5 and of(o, "help_requested")
+    texts = [e["text"] for e in of(o, "plan_change")]
+    assert any(t.startswith("Session ended with hq1 unanswered: the 5 hypothesis cap was reached, so ") for t in texts)
+    assert not any("proceeding on the default" in t or "cap ended the session" in t for t in texts)
+    assert types(o)[-1] == "session_finished"
+
+
+def test_no_help_is_requested_once_the_cap_is_reached(tmp_path):
+    o = help_session(tmp_path, max_hyps=3)
+    drive(o, [(judged(o, 1), SPEED)])
+    assert o.hyps[-1].judgment.verdict == "inconclusive" and not of(o, "help_requested")

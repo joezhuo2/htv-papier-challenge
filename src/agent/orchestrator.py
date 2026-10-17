@@ -414,8 +414,8 @@ class Orchestrator:
                 self.applied.clear()
                 if busy:
                     idle = time.monotonic()
-                if self.capped() and not self.pending():
-                    break
+                if self.capped():
+                    break  # pending help deadlines are not waited out, finish reports them as unanswered
                 if self.record:
                     if self.base_capped():
                         idle = time.monotonic()
@@ -471,6 +471,14 @@ class Orchestrator:
             self.export([("ledger", f"Hypothesis ledger {self.hyps[0].id} to {self.hyps[-1].id}", "ledger.md",
                           ex.ledger_md(self.hyps, out if best else None, self.naive.latency_ms, self.eager.latency_ms))]
                         + [("summary", f"Branch summary: {bid}", f"summary-{bid}.md", ex.summary_md(sm)) for bid, sm in self.summaries.items()])
+        why = (f"the {self.max_hyps} hypothesis cap was reached" if self.base_capped() else "the session was stopped" if self.stopped
+               else "the session went idle")
+        for hid, x in self.helps.items():
+            if open_help(x):
+                x["expired"] = True
+                self.log.emit("plan_change", help=hid, text=f"Session ended with {hid} unanswered: {why}, so {x['branch']} gets no more iterations.")
+        if self.hybrid and self.hybrid["state"] == "proposed":
+            self.log.emit("agent_log", text=f"Session ended with the hybrid of {' and '.join(self.hybrid['branches'])} unapproved: {why}.")
         for pr in self.promises:
             left = pr["n"] - (sum(h.branch == pr["branch"] for h in self.hyps) - pr["start"])
             if left <= 0:
@@ -746,7 +754,7 @@ class Orchestrator:
         if h.metrics.latency_ms is None:
             self.post_mortem(h)
         b.fails = b.fails + 1 if h.metrics.latency_ms is None else 0
-        if b.fails >= 2 and not any(x["branch"] == b.id and open_help(x) for x in self.helps.values()):
+        if b.fails >= 2 and not any(x["branch"] == b.id and open_help(x) for x in self.helps.values()) and not self.capped():
             target = b.lens if b.lens != "both" else "speed"
             self.summarize(h, b, f"Ask the {target.capitalize()} lens how to continue after two failed runs in a row.")
             self.request_help(h, b, target, failed=True)
@@ -767,7 +775,7 @@ class Orchestrator:
             self.post_mortem(h)
 
         b.misses = 0 if v == "confirmed" else b.misses + 1
-        if v == "inconclusive" and not any(x["branch"] == b.id for x in self.helps.values()):
+        if v == "inconclusive" and not any(x["branch"] == b.id for x in self.helps.values()) and not self.capped():
             target = b.lens if b.lens != "both" else "speed"
             self.summarize(h, b, f"Ask the {target.capitalize()} lens whether to keep tuning or change approach.")
             self.request_help(h, b, target)
@@ -899,7 +907,7 @@ class Orchestrator:
             self.log.emit("agent_log", text=f"No approval for the hybrid of {' and '.join(x['branches'])} within {self.help_deadline_s:.0f} s, so it is not run. "
                                             "Approving it later still runs it.")
         for hid, x in self.helps.items():
-            if not open_help(x) or self.log.clock() - x["t"] < x["help"]["deadline_s"]:
+            if not open_help(x) or self.log.clock() - x["t"] < x["help"]["deadline_s"] or self.capped():
                 continue
             x["expired"] = True
             b = self.live(x["branch"])
