@@ -39,7 +39,7 @@ export type FeedItem = Base & (
   | { kind: 'summary'; summary: Summary; run?: string; hypothesis?: string; verdict?: VerdictView }
   | { kind: 'plan_change'; help: string; text: string }
   | { kind: 'answer'; help: string; option: string; note?: string; by: Lens }
-  | { kind: 'export'; items: { kind: string; title: string }[] }
+  | { kind: 'export'; items: { kind: string; title: string; file: string }[] }
   | { kind: 'note'; note: NoteView }
   | { kind: 'branch'; branch: string; reason: string }
   | { kind: 'hybrid'; branches: string[]; text: string }
@@ -179,7 +179,7 @@ export function reduce(prev: View, a: Action): View {
       return { ...v, feed: [...v.feed, { kind: 'plan_change', help: e.help, text: e.text, t: e.t, mock }] }
     case 'agent_log':
       return { ...v, log: [...v.log, { t: e.t, text: e.text }] }
-    case 'papiers_write':
+    case 'findings_exported':
       return { ...v, feed: [...v.feed, { kind: 'export', items: e.items, t: e.t, mock }] }
     case 'report_ready':
       return { ...v, report: e.report, feed: [...v.feed, { kind: 'report', t: e.t, mock }] }

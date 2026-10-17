@@ -151,7 +151,8 @@ export type DemoEvent =
   | Ev<'help_answered', { help: string; option: string; note?: string; by: Lens }>
   | Ev<'plan_change', { help: string; text: string }>
   | Ev<'agent_log', { text: string }>
-  | Ev<'papiers_write', { items: { kind: 'summary' | 'negative_result' | 'ledger' | 'answer'; title: string }[] }>
+  // Papiers is read-only, findings are exported as local files for manual import
+  | Ev<'findings_exported', { items: { kind: 'summary' | 'negative_result' | 'ledger' | 'answer'; title: string; file: string }[] }>
   | Ev<'report_ready', { report: Report }>
   | Ev<'hybrid_proposed', { branches: string[]; text: string }>
   | Ev<'session_finished', { ledger: LedgerEntry[]; best: Report['best'] }>

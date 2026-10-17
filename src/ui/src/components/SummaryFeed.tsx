@@ -126,7 +126,7 @@ export function SummaryFeed(p: Props) {
           case 'export':
             return (
               <p key={i} className="line">
-                <span className="mono">{clock(f.t)}</span> <span className="strong">Exported for Papiers import:</span> {f.items.map(x => x.title).join('; ')} <MockTag on={f.mock} />
+                <span className="mono">{clock(f.t)}</span> <span className="strong">Exported for Papiers import:</span> {f.items.map((x, j) => <span key={j}>{j ? '; ' : ''}{x.title} <span className="mono">{x.file}</span></span>)} <MockTag on={f.mock} />
               </p>
             )
           case 'note':

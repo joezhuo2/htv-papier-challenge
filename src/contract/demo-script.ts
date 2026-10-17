@@ -136,7 +136,7 @@ const summaryMerge: Summary = {
   confidence_reason: 'The gain is small and the adversarial margin is 17%.',
   uncertainties: ['Beats eager by 1.13x on this shape only', 'Untested on other matrix shapes'],
   would_change_mind: 'A rerun on other shapes that regresses against eager.',
-  next_step: 'Write results to Papiers and stop, the remaining gain is within noise.',
+  next_step: 'Export the results for Papiers import and stop, the remaining gain is within noise.',
 }
 
 const report: Report = {
@@ -184,7 +184,7 @@ const raw: DemoEvent[] = [
   { t: 67000, type: 'agent_log', text: 'H1 rejected. Running an error vs K sweep on the H1 kernel to find the cause.' },
   { t: 74000, type: 'post_mortem', post_mortem: postMortem },
   { t: 76000, type: 'summary', summary: summarySpeedFinal },
-  { t: 78000, type: 'papiers_write', items: [{ kind: 'negative_result', title: 'H1 rejected: FP16 accumulation exceeds the adversarial bound' }, { kind: 'summary', title: 'Branch summary: speed' }] },
+  { t: 78000, type: 'findings_exported', items: [{ kind: 'negative_result', title: 'H1 rejected: FP16 accumulation exceeds the adversarial bound', file: 'exports/H1-negative-result.md' }, { kind: 'summary', title: 'Branch summary: speed', file: 'exports/summary-speed.md' }] },
   { t: 82000, type: 'branch_created', branch: prec, reason: 'Precision lens: find the fastest configuration inside the strict bound.' },
   { t: 83500, type: 'branch_created', branch: fast, reason: 'Pivot from the H1 post-mortem: keep the larger tiles and return to FP32 accumulation.' },
   { t: 85500, type: 'hypothesis_proposed', hypothesis: H2 },
@@ -231,7 +231,7 @@ const raw: DemoEvent[] = [
   { t: 124000, type: 'run_finished', run: r5 },
   { t: 125500, type: 'verdict', hypothesis: 'H4', verdict: 'confirmed', provisional: false, reason: 'Prediction holds and adversarial error stays inside the bound.', checks: [c('speedup vs best', '>= 1.30x', '1.45x', true), c('standard max error', '< 1e-3', '5.6e-4', true), c('adversarial max error', '< 1e-3', '8.1e-4', true)] },
   { t: 127000, type: 'summary', summary: summaryFastH4 },
-  { t: 129000, type: 'papiers_write', items: [{ kind: 'answer', title: 'Speed lens suggestion: approximate GELU' }, { kind: 'summary', title: 'Branch summary: fast' }, { kind: 'summary', title: 'Branch summary: prec' }] },
+  { t: 129000, type: 'findings_exported', items: [{ kind: 'answer', title: 'Speed lens suggestion: approximate GELU', file: 'exports/hq1-answer.md' }, { kind: 'summary', title: 'Branch summary: fast', file: 'exports/summary-fast.md' }, { kind: 'summary', title: 'Branch summary: prec', file: 'exports/summary-prec.md' }] },
 
   { t: 131000, type: 'agent_log', text: 'Both live branches have enough evidence. Building the comparative report.' },
   { t: 136000, type: 'report_ready', report },
@@ -246,7 +246,7 @@ const raw: DemoEvent[] = [
   { t: 169800, type: 'branch_status', branch: 'fast', status: 'merged' },
   { t: 170200, type: 'branch_status', branch: 'merge', status: 'done' },
   { t: 171000, type: 'summary', summary: summaryMerge },
-  { t: 173500, type: 'papiers_write', items: [{ kind: 'ledger', title: 'Hypothesis ledger H0 to H5' }, { kind: 'summary', title: 'Branch summary: merge' }] },
+  { t: 173500, type: 'findings_exported', items: [{ kind: 'ledger', title: 'Hypothesis ledger H0 to H5', file: 'exports/ledger.md' }, { kind: 'summary', title: 'Branch summary: merge', file: 'exports/summary-merge.md' }] },
   {
     t: 176000,
     type: 'session_finished',

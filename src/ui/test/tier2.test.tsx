@@ -43,6 +43,7 @@ describe('tier 2', () => {
     at(180000)
     const feed = screen.getByLabelText('summary feed').textContent!
     expect(feed).toContain('Exported for Papiers import')
-    expect(feed.match(/written to papiers/i)).toBeNull()
+    expect(feed).toContain('exports/H1-negative-result.md')
+    expect(feed.match(/(write|written) (results )?to papiers/i)).toBeNull()
   })
 })
