@@ -20,6 +20,9 @@ export interface Metrics {
   vram_mb: number
   compiled_ok: boolean
   correct_ok: boolean // default gate on the standard batch, adversarial gating comes from the precision lens
+  // speedups against references timed in the same window as this run, and the relative half-range of the per-round ratios
+  speedups?: Partial<Record<'naive' | 'eager' | 'parent', number>>
+  spreads?: Partial<Record<'naive' | 'eager' | 'parent', number>>
 }
 
 export interface Branch {
@@ -152,7 +155,7 @@ export type DemoEvent =
   | Ev<'branch_status', { branch: string; status: BranchStatus }>
   | Ev<'hypothesis_proposed', { hypothesis: Hypothesis }>
   | Ev<'run_started', { run: string; branch: string; hypothesis: string }>
-  | Ev<'run_finished', { run: Run }>
+  | Ev<'run_finished', { run: Run; error?: string }> // error is set when the run failed to compile or hit the harness timeout
   | Ev<'verdict', { hypothesis: string; verdict: Verdict; provisional: boolean; reason: string; checks: Check[]; bound: Bound }>
   | Ev<'post_mortem', { post_mortem: PostMortem }>
   | Ev<'summary', { summary: Summary }>
@@ -165,9 +168,14 @@ export type DemoEvent =
   | Ev<'report_ready', { report: Report }>
   | Ev<'hybrid_proposed', { branches: string[]; text: string }>
   | Ev<'session_finished', { ledger: LedgerEntry[]; best: Report['best'] }>
+  // a visible failure state: the loop waits for a retry command (or retries by itself after retry_in_s) instead of looking frozen
+  | Ev<'agent_error', { kind: 'llm_timeout' | 'llm_error' | 'harness_timeout'; text: string; branch?: string; retry_in_s?: number }>
 
 // client to server, not replayed by the mock because the scripted events already include their effects
 export type Command =
   | { type: 'add_directive'; lens: Lens; text: string }
   | { type: 'answer_help'; help: string; option: string; note?: string; by: Lens }
   | { type: 'approve_hybrid'; branches: string[] }
+  | { type: 'start' }
+  | { type: 'stop' }
+  | { type: 'retry' }
