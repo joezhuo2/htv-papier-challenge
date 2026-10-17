@@ -220,7 +220,7 @@ svg text { font-family: var(--sans); fill: var(--ink); }
 svg .mono { font-family: var(--mono); }
 svg .muted { fill: var(--muted); }
 svg [role='button'] { cursor: pointer; }
-svg [role='button']:focus-visible { outline: none; }
+svg [role='button']:focus, svg [role='button']:focus-visible { outline: none; }
 svg [role='button']:focus-visible > .hit { stroke: var(--ink); stroke-width: 2; }
 
 .table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -241,6 +241,23 @@ ul.plain { margin: 0; padding-left: 16px; }
 .meta { font-size: 12px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
 .notice { font-size: 12px; border-top: 1px solid var(--border); padding-top: 6px; }
 .panel-head { position: absolute; top: 8px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 12px; color: var(--muted); pointer-events: none; z-index: 1; }
-.legend { display: inline-flex; align-items: center; gap: 4px 6px; color: var(--ink); }
+.legend { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; color: var(--ink); }
 .legend svg { display: inline-block; position: static; }
-.legend svg + svg, .legend svg:not(:first-child) { margin-left: 6px; }
+.legend .entry { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; margin-right: 6px; }
+.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+.card.collapsed { gap: 2px; padding: 8px 12px; cursor: pointer; }
+.card.collapsed:hover { background: var(--hover); }
+.oneline { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toggle { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.toggle button { border: 0; border-radius: 0; padding: 0 10px; font-size: 12px; line-height: 22px; background: var(--surface); }
+.toggle button + button { border-left: 1px solid var(--border); }
+.toggle button[aria-pressed='true'] { background: var(--ink); color: var(--surface); }
+@keyframes flash { from { background: var(--hover); border-color: var(--ink); } to { background: var(--surface); border-color: var(--border); } }
+.flash { animation: flash 1.2s ease-out; }
+.informed { display: flex; flex-direction: column; align-items: flex-start; gap: 0; text-align: left; font-size: 12px; padding: 4px 8px; max-width: 100%; }
+.informed .oneline { max-width: 100%; }
+@media (prefers-reduced-motion: reduce) { .flash { animation: none; } }

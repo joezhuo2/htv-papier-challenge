@@ -5,7 +5,8 @@ export function Banner({ error, status, onRetry }: { error?: string; status?: Li
   if (status?.state === 'closed') {
     return (
       <div className="banner" role="alert" data-testid="reconnect-banner">
-        Connection to the agent dropped. Reconnecting in {Math.round(status.retryIn / 1000)}s (attempt {status.attempt}).
+        {status.attempt > 1 ? 'No agent server is reachable at /ws.' : 'Connection to the agent dropped.'} Reconnecting in {Math.round(status.retryIn / 1000)}s (attempt {status.attempt}).
+        {status.attempt > 1 ? <span className="mono">Start it with: uv run uvicorn server.app:app --port 8000</span> : null}
         <button className="link" onClick={onRetry}>Retry now</button>
       </div>
     )

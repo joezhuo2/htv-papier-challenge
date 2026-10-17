@@ -34,9 +34,16 @@ describe('branch graph and metric chart', () => {
     at(70000)
     fireEvent.click(screen.getByTestId('point-r2'))
     const detail = screen.getByTestId('run-detail')
-    expect(within(detail).getByText('rejected')).toBeTruthy()
-    expect(within(detail).getByText('fail')).toBeTruthy()
-    expect(screen.getByTestId('adv-panel').textContent).toContain('3.2e-2 over')
+    const blocks = within(detail).getAllByTestId('verdict-block')
+    expect(blocks.map(b => b.querySelector('.inline > span:last-child')!.textContent)).toEqual([
+      'verdict 1 of 2, 0:37, standard under 2e-2 (set by Speed)',
+      'verdict 2 of 2, 1:03, standard and adversarial under 1e-3 (set by Precision)',
+    ])
+    expect(within(blocks[0]).getByText('provisionally confirmed')).toBeTruthy()
+    expect(within(blocks[1]).getByText('rejected')).toBeTruthy()
+    expect(within(blocks[1]).getByText('fail')).toBeTruthy()
+    expect(screen.getByTestId('adv-r2').getAttribute('data-over')).toBe('true')
+    expect(screen.getByTestId('adv-panel').textContent).toContain('r2 3.2e-2 over bound')
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByTestId('run-detail')).toBeNull()
   })
@@ -46,6 +53,22 @@ describe('branch graph and metric chart', () => {
     at(12000)
     fireEvent.click(screen.getByTestId('node-main').querySelector('[role="button"]')!)
     expect(within(screen.getByTestId('run-detail')).getByText('r1')).toBeTruthy()
+  })
+
+  it('keeps adversarial error ungated until the Precision directive, then reveals it', () => {
+    render(<App source={{ mode: 'mock' }} />)
+    at(50000)
+    expect(screen.getByTestId('adv-ungated')).toBeTruthy()
+    expect(screen.getByTestId('adv-panel').textContent).not.toContain('3.2e-2')
+    expect(screen.getByLabelText('legend').textContent).toContain('provisional')
+    at(12000)
+    expect(screen.getByTestId('adv-ungated')).toBeTruthy()
+    at(2000)
+    expect(screen.queryByTestId('adv-ungated')).toBeNull()
+    expect(screen.getByTestId('adv-panel').textContent).toContain('bound 1e-3, set by Precision')
+    fireEvent.click(screen.getByTestId('point-r1'))
+    expect(screen.getByTestId('adv-panel').textContent).toContain('r2 3.2e-2 over bound')
+    expect(screen.getByLabelText('legend').textContent).toContain('inconclusive')
   })
 
   it('reaches the final graph with five branches', () => {

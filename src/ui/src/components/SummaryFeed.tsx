@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FeedItem, View } from '../state/reducer'
-import { clock, hypothesisOf, lensName, ms, papiersNote, parentBest, predictionText, runOf, sci, times } from '../state/derive'
+import { boundText, clock, hypothesisOf, lensName, ms, parentBest, predictionText, runOf, sci, times } from '../state/derive'
 import { MockTag, VerdictChip } from './Glyph'
+import { InformedBy } from './PapiersPanel'
 import type { ReactNode } from 'react'
 
 interface Props {
@@ -14,7 +15,7 @@ interface Props {
 
 type SummaryItem = Extract<FeedItem, { kind: 'summary' }>
 
-function SummaryCard({ view, item, onSelectRun, onPostMortem }: { view: View; item: SummaryItem } & Pick<Props, 'onSelectRun' | 'onPostMortem'>) {
+function SummaryCard({ view, item, onSelectRun, onPostMortem, collapsed, onToggle }: { view: View; item: SummaryItem; collapsed: boolean; onToggle?: () => void } & Pick<Props, 'onSelectRun' | 'onPostMortem'>) {
   const { summary } = item
   const h = hypothesisOf(view, item.hypothesis)
   const run = runOf(view, item.run)
@@ -25,24 +26,45 @@ function SummaryCard({ view, item, onSelectRun, onPostMortem }: { view: View; it
   const base = h && (h.prediction.vs === 'naive' ? undefined : parentBest(view, h.branch, h.t))
   const eager = view.baselines?.eager.latency_ms
   const naive = view.baselines?.naive.latency_ms
-  const note = papiersNote(h)
   const rejected = vd?.verdict === 'rejected' && !vd.provisional
+  // verdicts up to this card, so a later flip shows on the later card and the earlier card keeps its snapshot
+  const trail = (item.hypothesis ? view.trail[item.hypothesis] ?? [] : []).filter(t => t.t <= item.t)
+  // written while another branch waits on a help request
+  const waiting = view.helps.find(x => x.t < item.t && (!x.answer || x.answer.t > item.t) && x.help.blocks !== summary.branch)
+  const head = (
+    <div className="row">
+      <h3>{item.hypothesis ? <span className="mono">{item.hypothesis}</span> : null} on <span className="mono">{summary.branch}</span></h3>
+      <VerdictChip verdict={vd?.verdict} provisional={vd?.provisional} />
+      {waiting ? <span className="tag" data-testid="meanwhile">meanwhile, <span className="mono">{waiting.help.blocks}</span> waits on {lensName(waiting.help.target)}</span> : null}
+      <span style={{ flex: 1 }} />
+      <span className="mono small muted">{clock(item.t)}</span>
+    </div>
+  )
+
+  if (collapsed) {
+    return (
+      <article
+        className="card collapsed" data-testid="summary-card" data-collapsed="true" aria-label={`${item.hypothesis ?? ''} summary, collapsed`}
+        role="button" tabIndex={0} onClick={onToggle}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle?.() } }}
+      >
+        {head}
+        <p className="small oneline">{summary.verdict}</p>
+      </article>
+    )
+  }
 
   return (
     <article className="card" data-testid="summary-card" aria-label={`${item.hypothesis ?? ''} summary`}>
-      <div className="row">
-        <h3>{item.hypothesis ? <span className="mono">{item.hypothesis}</span> : null} on <span className="mono">{summary.branch}</span></h3>
-        <VerdictChip verdict={vd?.verdict} provisional={vd?.provisional} />
-        <span className="spacer" style={{ flex: 1 }} />
-        <span className="mono small muted">{clock(item.t)}</span>
-      </div>
+      {head}
       <div className="row">
         {superseded ? <span className="tag">superseded, now {current.provisional ? 'provisional' : current.verdict}</span> : null}
         {run?.assumption ? <span className="tag">assumption pending</span> : null}
-        {note ? <span className="tag" title={h?.note}>Papiers note {note}</span> : null}
+
         <MockTag on={item.mock} />
       </div>
       <p>{summary.tried}</p>
+      {h ? <InformedBy view={view} h={h} /> : null}
       <dl>
         {h ? <><dt>Predicted</dt><dd>{predictionText(view, h)}</dd></> : null}
         {m && run ? (
@@ -59,6 +81,17 @@ function SummaryCard({ view, item, onSelectRun, onPostMortem }: { view: View; it
             </dd>
           </>
         ) : null}
+        {vd ? <><dt>Judged against</dt><dd data-testid="judged-bound">{boundText(vd.bound)}</dd></> : null}
+        {trail.length > 1 ? (
+          <>
+            <dt>Verdict history</dt>
+            <dd data-testid="verdict-trail">
+              {trail.map((t, i) => (
+                <div key={i} className="inline small"><VerdictChip verdict={t.verdict} provisional={t.provisional} /> {boundText(t.bound)}, {clock(t.t)}</div>
+              ))}
+            </dd>
+          </>
+        ) : null}
         <dt>Why</dt><dd>{summary.verdict}</dd>
         <dt>Next</dt><dd>{summary.next_step}</dd>
       </dl>
@@ -70,6 +103,7 @@ function SummaryCard({ view, item, onSelectRun, onPostMortem }: { view: View; it
           <p><span className="muted">Would change my mind:</span> {summary.would_change_mind}</p>
         </div>
       </details>
+      {onToggle ? <button className="link small" style={{ alignSelf: 'flex-start' }} onClick={onToggle}>Collapse</button> : null}
       {rejected && item.hypothesis ? (
         <button className="link small" style={{ alignSelf: 'flex-start' }} onClick={() => onPostMortem(item.hypothesis!)}>
           {view.postMortems.some(p => p.hypothesis === item.hypothesis) ? 'Open post-mortem' : 'Post-mortem pending'}
@@ -83,6 +117,9 @@ export function SummaryFeed(p: Props) {
   const { view } = p
   const end = useRef<HTMLDivElement>(null)
   const touched = useRef(0)
+  const [opened, setOpened] = useState<number[]>([])
+  const latest = view.feed.map(f => f.kind).lastIndexOf('summary')
+  const toggle = (i: number) => setOpened(o => (o.includes(i) ? o.filter(x => x !== i) : [...o, i]))
   useEffect(() => {
     const box = end.current?.closest('.col')
     const mark = () => { touched.current = Date.now() }
@@ -96,7 +133,11 @@ export function SummaryFeed(p: Props) {
   // follow the newest card unless the presenter scrolled the feed in the last few seconds
   useEffect(() => {
     const box = end.current?.closest('.col') as HTMLElement | null
-    if (box && end.current && Date.now() - touched.current > 8000) box.scrollTop = end.current.offsetTop - box.clientHeight + 12
+    const cards = box?.querySelectorAll<HTMLElement>('[data-testid="summary-card"]')
+    const last = cards?.[cards.length - 1] ?? null
+    // follow the newest item, but never scroll the newest summary card's top out of view
+    if (box && end.current && last && Date.now() - touched.current > 8000)
+      box.scrollTop = Math.min(end.current.offsetTop - box.clientHeight + 12, last.offsetTop - 12)
   }, [view.feed.length])
 
   const optionLabel = (help: string, option: string) =>
@@ -109,7 +150,12 @@ export function SummaryFeed(p: Props) {
       {view.feed.map((f, i) => {
         switch (f.kind) {
           case 'summary':
-            return <SummaryCard key={i} view={view} item={f} onSelectRun={p.onSelectRun} onPostMortem={p.onPostMortem} />
+            return (
+              <SummaryCard
+                key={i} view={view} item={f} onSelectRun={p.onSelectRun} onPostMortem={p.onPostMortem}
+                collapsed={i !== latest && !opened.includes(i)} onToggle={i === latest ? undefined : () => toggle(i)}
+              />
+            )
           case 'plan_change':
             return (
               <article key={i} className="card" data-testid="plan-change">
@@ -131,8 +177,9 @@ export function SummaryFeed(p: Props) {
             )
           case 'note':
             return (
-              <p key={i} className="line" title={f.note.excerpt}>
-                <span className="mono">{clock(f.t)}</span> <span className="strong">Read Papiers note {f.note.id}:</span> {f.note.title}
+              <p key={i} className="line" title={f.note?.excerpt}>
+                <span className="mono">{clock(f.t)}</span>{' '}
+                {f.note ? <><span className="strong">Read Papiers {f.note.id}:</span> {f.note.title}</> : <><span className="strong">Searched Papiers:</span> no matching notes for "{f.query}"</>}
               </p>
             )
           case 'branch':

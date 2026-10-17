@@ -42,16 +42,11 @@ export function HelpCard({ view, hv, now, sent, onSend }: Props) {
         <span className="countdown mono" data-testid="countdown">{expired ? 'deadline passed' : `${Math.ceil(left / 1000)}s left`}</span>
       </div>
       <p>{help.question}</p>
-      <dl>
-        <dt>Blocked</dt><dd>Branch <span className="mono">{help.blocks}</span> waits for this answer.</dd>
-        <dt>Meanwhile</dt><dd>{meanwhile.length ? <>Continuing on {meanwhile.map(b => <span key={b} className="mono">{b} </span>)}</> : 'Nothing else is running.'}</dd>
-        <dt>Default</dt><dd>{label(help.default)}</dd>
-        <dt>Changes</dt><dd>{help.what_changes}</dd>
-      </dl>
-      <details className="small">
-        <summary className="muted">Evidence ({help.evidence.length})</summary>
-        <ul className="plain">{help.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
-      </details>
+      <p className="meta" data-testid="help-status">
+        <span>Blocks <span className="mono">{help.blocks}</span></span>
+        <span>meanwhile {meanwhile.length ? meanwhile.map(b => <span key={b} className="mono">{b} </span>) : 'nothing else runs'}</span>
+        <span>default: {label(help.default)}</span>
+      </p>
       {expired ? <p className="strong" role="status">Proceeding on assumption: {label(help.default)}</p> : null}
       <form
         className="stack"
@@ -68,12 +63,17 @@ export function HelpCard({ view, hv, now, sent, onSend }: Props) {
             </label>
           ))}
         </div>
-        <textarea aria-label="answer note" value={note} onChange={e => setNote(e.target.value)} placeholder="Optional note, for example a hunch to test" />
+        <input aria-label="answer note" value={note} onChange={e => setNote(e.target.value)} placeholder="Optional note or hunch" />
         <div className="inline">
           <button type="submit" className="primary">Send answer</button>
           {mine ? <span className="small muted">{mine.delivered ? 'Sent, waiting for the agent' : 'Recorded locally, not delivered in replay'}</span> : null}
         </div>
       </form>
+      <details className="small">
+        <summary className="muted">What changes and evidence ({help.evidence.length})</summary>
+        <p style={{ marginTop: 4 }}>{help.what_changes}</p>
+        <ul className="plain">{help.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
+      </details>
     </article>
   )
 }

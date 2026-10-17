@@ -83,6 +83,21 @@ describe('player', () => {
     expect(got).toHaveLength(2)
   })
 
+  it('back steps one event back and the emitted prefix shrinks, then playback resumes in order', () => {
+    const got: DemoEvent[] = []
+    const p = new Player(events, e => got.push(e))
+    p.step(); p.step(); p.step()
+    p.back()
+    expect(p.index).toBe(2)
+    expect(texts(p.emitted())).toEqual(['0', '1000'])
+    expect(p.position()).toBe(1000)
+    p.back(); p.back(); p.back()
+    expect(p.index).toBe(0)
+    expect(p.position()).toBe(0)
+    p.step()
+    expect(texts(got)).toEqual(['0', '1000', 'same', '0'])
+  })
+
   it('cancel stops pending events', () => {
     const got: DemoEvent[] = []
     const p = new Player(events, e => got.push(e))

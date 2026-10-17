@@ -36,15 +36,17 @@ export function BranchGraph({ view, onSelectBranch, onSelectRun }: Props) {
   const [ref, { width, height }] = useSize<HTMLDivElement>()
   const pad = 16
   // five columns matches the usual session, so nodes do not move as branches appear
-  const cols = Math.max(view.branches.length, 5)
+  // nodes and lanes scale to the panel: columns follow the branch count, rows only for lenses that have branches
+  const cols = Math.max(view.branches.length, 3)
   const colW = (width - pad * 2) / cols
-  const gap = colW < 130 ? 14 : 28
-  const w = Math.min(230, colW - gap)
-  const NODE_H = height > 300 ? 50 : 44
-  const fs = height > 300 && w > 170 ? 13 : 12
+  const gap = colW < 130 ? 14 : 32
+  const w = Math.min(280, colW - gap)
   const top = 34
-  const usable = Math.max(height - top - NODE_H - 40, 60)
-  const laneY = { speed: top + NODE_H / 2, both: top + NODE_H / 2 + usable / 2, precision: top + NODE_H / 2 + usable }
+  const rows = (['speed', 'both', 'precision'] as const).filter(l => view.branches.some(b => b.lens === l))
+  const band = (height - top - 8) / Math.max(rows.length, 1)
+  const NODE_H = Math.round(Math.min(64, Math.max(44, band * 0.36)))
+  const fs = NODE_H >= 58 && w > 190 ? 14 : NODE_H >= 50 && w > 160 ? 13 : 12
+  const laneY = Object.fromEntries(rows.map((l, i) => [l, top + band * i + Math.max(NODE_H / 2 + 6, band * 0.4)])) as Record<BranchView['lens'], number>
   const pos = new Map(view.branches.map(b => [b.id, { x: pad + b.index * colW + (colW - gap - w) / 2, y: laneY[b.lens] - NODE_H / 2 }]))
 
   return (
@@ -67,7 +69,7 @@ export function BranchGraph({ view, onSelectBranch, onSelectRun }: Props) {
           const blocker = view.helps.find(h => h.help.blocks === b.id && !h.answer)
           const s = b.status
           const dash = s === 'rejected' ? '5 3' : undefined
-          const roomy = (b.id.length + statusWord[s].length + 1) * 7.8 + 40 <= w
+          const roomy = (b.id.length + statusWord[s].length + 1) * fs * 0.62 + 40 <= w
           return (
             <g key={b.id} data-testid={`node-${b.id}`} data-status={s} aria-label={`branch ${b.id}, ${statusWord[s]}`}>
               <g {...activate(() => onSelectBranch(b.id))}>
@@ -76,7 +78,7 @@ export function BranchGraph({ view, onSelectBranch, onSelectRun }: Props) {
                 <rect
                   className="hit" x={x} y={y} width={w} height={NODE_H} rx="6"
                   fill={s === 'waiting_on_human' ? 'none' : 'var(--surface)'}
-                  stroke={s === 'rejected' ? 'var(--rejected)' : 'var(--ink)'} strokeDasharray={dash} strokeWidth={sel ? 2 : 1}
+                  stroke={sel ? 'var(--accent)' : s === 'rejected' ? 'var(--rejected)' : 'var(--ink)'} strokeDasharray={dash} strokeWidth={sel ? 1.5 : 1}
                 />
                 <title>{b.label}</title>
                 <text x={x + 8} y={y + NODE_H / 2 - 5} fontSize={fs} className="mono">
@@ -108,7 +110,8 @@ export function BranchGraph({ view, onSelectBranch, onSelectRun }: Props) {
                 const rsel = view.selected.run === r.id
                 return (
                   <g key={r.id} {...activate(() => onSelectRun(r.id))} aria-label={`run ${r.id}, ${final ?? (r.metrics ? 'measured' : 'running')}`}>
-                    <circle className="hit" cx={cx} cy={cy} r={rsel ? 6 : 5} fill={final === 'confirmed' ? 'var(--ink)' : 'var(--surface)'} stroke="var(--ink)" strokeWidth={rsel ? 2 : 1} strokeDasharray={r.metrics ? undefined : '2 2'} />
+                    {rsel ? <circle cx={cx} cy={cy} r="8.5" fill="none" stroke="var(--ink)" strokeWidth="1" /> : null}
+                    <circle className="hit" cx={cx} cy={cy} r="5" fill={final === 'confirmed' ? 'var(--ink)' : 'var(--surface)'} stroke="var(--ink)" strokeWidth="1" strokeDasharray={r.metrics || r.failed ? undefined : '2 2'} />
                     {final === 'rejected' ? <path d={`M${cx - 3} ${cy - 3} l6 6 m0 -6 l-6 6`} stroke="var(--rejected)" strokeWidth="1.4" /> : null}
                     {final === 'inconclusive' ? <path d={`M${cx - 3} ${cy} q1.5 -2 3 0 t3 0`} stroke="var(--ink)" fill="none" strokeWidth="1.2" /> : null}
                     <text x={cx} y={cy + 18} fontSize="11" textAnchor="middle" className="mono">{r.id}</text>

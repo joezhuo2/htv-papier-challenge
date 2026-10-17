@@ -63,6 +63,26 @@ describe('reducer on demoScript', () => {
     expect(s.runs.at(-1)?.assumption).toBe(true)
   })
 
+  it('marks a run with null latency as failed instead of measured', () => {
+    let s = fold(demoScript.slice(0, 5))
+    s = reduce(s, { t: 8000, type: 'run_started', run: 'rf', branch: 'main', hypothesis: 'H0' })
+    const metrics = { latency_ms: null, tflops: null, max_error: null, adv_error: null, vram_mb: null, compiled_ok: false, correct_ok: false }
+    s = reduce(s, { t: 9000, type: 'run_finished', run: { id: 'rf', branch: 'main', hypothesis: 'H0', params: s.hypotheses[0].params, metrics: metrics as never } })
+    expect(s.runs.at(-1)).toMatchObject({ id: 'rf', failed: true, metrics: undefined, finished: 9000 })
+  })
+
+  it('stores every verdict with its bound, in order, and the active bound', () => {
+    expect(v.trail.H1.map(t => [t.verdict, t.provisional, t.bound.set_by, t.bound.standard, t.bound.adversarial])).toEqual([
+      ['confirmed', true, 'speed', 2e-2, null],
+      ['rejected', false, 'precision', 1e-3, 1e-3],
+    ])
+    expect(v.trail.H0[0].bound).toEqual({ standard: 1e-3, adversarial: null, set_by: 'default' })
+    expect(Object.values(v.trail).flat()).toHaveLength(7)
+    expect(v.bound).toEqual({ standard: 1e-3, adversarial: 1e-3, set_by: 'precision' })
+    const before = fold(demoScript.filter(e => e.t < 60000))
+    expect(before.bound?.adversarial).toBeNull()
+  })
+
   it('handles ui actions', () => {
     let s = reduce(initialView(), { type: 'ui/lens', lens: 'precision' })
     s = reduce(s, { type: 'ui/select', selected: { run: 'r2', branch: 'speed' } })

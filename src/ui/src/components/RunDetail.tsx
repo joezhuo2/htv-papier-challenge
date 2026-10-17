@@ -1,5 +1,6 @@
 import type { View } from '../state/reducer'
-import { hypothesisOf, lensName, ms, papiersNote, paramText, predictionText, runOf, sci } from '../state/derive'
+import { boundText, clock, hypothesisOf, lensName, ms, paramText, predictionText, runOf, sci } from '../state/derive'
+import { InformedBy } from './PapiersPanel'
 import { Glyph, VerdictChip } from './Glyph'
 
 export function RunDetail({ view, onClose }: { view: View; onClose: () => void }) {
@@ -10,7 +11,6 @@ export function RunDetail({ view, onClose }: { view: View; onClose: () => void }
   const h = hypothesisOf(view, run?.hypothesis)
   const vd = h && view.verdicts[h.id]
   const m = run?.metrics
-  const note = papiersNote(h)
 
   return (
     <article className="card focus" aria-label="selection" data-testid="run-detail">
@@ -24,7 +24,7 @@ export function RunDetail({ view, onClose }: { view: View; onClose: () => void }
       {h ? (
         <>
           <p><span className="mono">{h.id}</span> {h.claim}</p>
-          {note ? <span className="tag" style={{ alignSelf: 'flex-start' }}>Papiers note {note}</span> : null}
+          <InformedBy view={view} h={h} />
           <dl>
             <dt>Predicted</dt><dd>{predictionText(view, h)}</dd>
             {run?.params ? <><dt>Params</dt><dd className="mono">{paramText(run.params)}</dd></> : null}
@@ -34,25 +34,31 @@ export function RunDetail({ view, onClose }: { view: View; onClose: () => void }
                 <dt>Error</dt><dd>max {sci(m.max_error)}, adversarial {sci(m.adv_error)}</dd>
                 <dt>VRAM</dt><dd>{m.vram_mb} MB</dd>
               </>
-            ) : <><dt>Status</dt><dd>running</dd></>}
+            ) : <><dt>Status</dt><dd>{run?.failed ? 'failed to compile or timed out' : 'running'}</dd></>}
           </dl>
-          {vd ? (
-            <table className="table">
-              <thead><tr><th>check</th><th>predicted</th><th>observed</th><th /></tr></thead>
-              <tbody>
-                {vd.checks.map(c => {
-                  const mark = c.pass === null ? 'inconclusive' : c.pass ? 'confirmed' : 'rejected'
-                  return (
-                    <tr key={c.name}>
-                      <td>{c.name}</td><td className="mono">{c.predicted}</td><td className="mono">{c.observed}</td>
-                      <td><span className={`verdict ${mark}`} style={{ border: 0, padding: 0 }}><Glyph mark={mark} />{c.pass === null ? 'noise' : c.pass ? 'pass' : 'fail'}</span></td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          ) : null}
-          {vd ? <p className="small">{vd.reason}</p> : null}
+          {(h ? view.trail[h.id] ?? [] : []).map((t, i, all) => (
+            <div key={i} className="stack" data-testid="verdict-block" style={{ gap: 4 }}>
+              <div className="inline small">
+                <VerdictChip verdict={t.verdict} provisional={t.provisional} />
+                <span>{all.length > 1 ? `verdict ${i + 1} of ${all.length}, ` : ''}{clock(t.t)}, {boundText(t.bound)}</span>
+              </div>
+              <table className="table">
+                <thead><tr><th>check</th><th>predicted</th><th>observed</th><th /></tr></thead>
+                <tbody>
+                  {t.checks.map(c => {
+                    const mark = c.pass === null ? 'inconclusive' : c.pass ? 'confirmed' : 'rejected'
+                    return (
+                      <tr key={c.name}>
+                        <td>{c.name}</td><td className="mono">{c.predicted}</td><td className="mono">{c.observed}</td>
+                        <td><span className={`verdict ${mark}`} style={{ border: 0, padding: 0 }}><Glyph mark={mark} />{c.pass === null ? 'noise' : c.pass ? 'pass' : 'fail'}</span></td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              <p className="small">{t.reason}</p>
+            </div>
+          ))}
         </>
       ) : <p className="empty">No runs on this branch yet.</p>}
     </article>

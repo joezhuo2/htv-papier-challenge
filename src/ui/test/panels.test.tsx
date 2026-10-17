@@ -22,7 +22,7 @@ describe('steering and feed', () => {
 
   it('shows directives per lens, the conflict notice, and switches lens with keys', () => {
     render(<App source={{ mode: 'mock' }} />)
-    expect(screen.getByText('mock')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'mock' }).getAttribute('aria-pressed')).toBe('true')
     at(90000)
     expect(screen.getByTestId('directive-d1')).toBeTruthy()
     expect(screen.queryByTestId('directive-d2')).toBeNull()
@@ -41,9 +41,20 @@ describe('steering and feed', () => {
     at(64000)
     const cards = screen.getAllByTestId('summary-card')
     expect(cards).toHaveLength(3)
+    expect(cards.map(c => c.getAttribute('data-collapsed'))).toEqual(['true', 'true', null])
     expect(within(cards[1]).getByText('provisionally confirmed')).toBeTruthy()
-    expect(within(cards[1]).getByText(/superseded, now rejected/)).toBeTruthy()
-    expect(within(cards[2]).getByText('rejected')).toBeTruthy()
+    expect(within(cards[2]).getAllByText('rejected')).toHaveLength(2)
+    fireEvent.click(cards[1])
+    const opened = screen.getAllByTestId('summary-card')[1]
+    expect(within(opened).getByText(/superseded, now rejected/)).toBeTruthy()
+    expect(within(opened).getByTestId('judged-bound').textContent).toBe('standard under 2e-2 (set by Speed)')
+    expect(within(opened).queryByTestId('verdict-trail')).toBeNull()
+    const last = screen.getAllByTestId('summary-card')[2]
+    expect(within(last).getByTestId('judged-bound').textContent).toBe('standard and adversarial under 1e-3 (set by Precision)')
+    expect(within(last).getByTestId('verdict-trail').textContent).toBe(
+      'provisionally confirmed standard under 2e-2 (set by Speed), 0:37rejected standard and adversarial under 1e-3 (set by Precision), 1:03')
+    fireEvent.click(within(opened).getByRole('button', { name: 'Collapse' }))
+    expect(screen.getAllByTestId('summary-card')[1].getAttribute('data-collapsed')).toBe('true')
   })
 
   it('records commands locally in mock mode', () => {
@@ -51,6 +62,28 @@ describe('steering and feed', () => {
     fireEvent.change(screen.getByLabelText(/new directive/i), { target: { value: 'Try approximate GELU' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     expect(screen.getByText(/Recorded locally, not delivered/)).toBeTruthy()
+  })
+
+  it('prev re-folds one event back and the mode toggle navigates', () => {
+    render(<App source={{ mode: 'mock' }} />)
+    at(0)
+    fireEvent.keyDown(window, { key: ' ' })
+    for (let i = 0; i < 8; i++) fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(screen.getAllByTestId('summary-card')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'prev' }))
+    expect(screen.getAllByTestId('summary-card')).toHaveLength(1)
+    fireEvent.keyDown(window, { key: 'ArrowLeft' })
+    expect(screen.queryByTestId('summary-card')).toBeNull()
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(screen.getAllByTestId('summary-card')).toHaveLength(1)
+    const loc = window.location
+    const fake = { search: '' }
+    Object.defineProperty(window, 'location', { value: fake, configurable: true })
+    fireEvent.click(screen.getByRole('button', { name: 'mock' }))
+    expect(fake.search).toBe('')
+    fireEvent.click(screen.getByRole('button', { name: 'live' }))
+    expect(fake.search).toBe('?mode=live')
+    Object.defineProperty(window, 'location', { value: loc, configurable: true })
   })
 
   it('space pauses and right arrow steps', () => {

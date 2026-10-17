@@ -1,4 +1,4 @@
-import type { Hypothesis, Params, Verdict } from '@contract/types'
+import type { Bound, Hypothesis, Params, Verdict } from '@contract/types'
 import type { BranchView, HypothesisView, RunView, View } from './reducer'
 
 export const clock = (ms: number) => {
@@ -45,11 +45,17 @@ export const predictedLatency = (v: View, h: HypothesisView) => {
   return base === undefined ? undefined : base / h.prediction.min_speedup
 }
 
+export const boundText = (b: Bound) =>
+  b.set_by === 'default' ? `default ${sci(b.standard)}`
+    : b.adversarial === null ? `standard under ${sci(b.standard)} (set by ${lensName(b.set_by)})`
+      : b.adversarial === b.standard ? `standard and adversarial under ${sci(b.standard)} (set by ${lensName(b.set_by)})`
+        : `standard under ${sci(b.standard)}, adversarial under ${sci(b.adversarial)} (set by ${lensName(b.set_by)})`
+
 export const predictionText = (v: View, h: HypothesisView) => {
   const base = baseLatency(v, h)
   const vs = h.prediction.vs === 'naive' ? 'naive' : 'best so far'
   const at = base === undefined ? '' : ` (${ms(base)})`
-  return `at least ${times(h.prediction.min_speedup)} vs ${vs}${at}, max error under ${sci(h.prediction.max_error)}`
+  return `at least ${times(h.prediction.min_speedup)} vs ${vs}${at}, error ${boundText(h.prediction.bound)}`
 }
 
 export const papiersNote = (h?: Hypothesis) => h?.note?.match(/papiers note (\S+)/i)?.[1]

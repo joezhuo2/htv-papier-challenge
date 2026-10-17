@@ -44,6 +44,18 @@ export class Player {
     this.emit(e)
   }
 
+  // steps back one event: the caller re-folds emitted() from scratch, so state never depends on undoing an event
+  back() {
+    this.pause()
+    if (this.cancelled || this.i === 0) return
+    this.i -= 1
+    this.pos = this.i ? this.events[this.i - 1].t : 0
+  }
+
+  emitted() {
+    return this.events.slice(0, this.i)
+  }
+
   setSpeed(speed: number) {
     const playing = !this.paused
     this.pause()

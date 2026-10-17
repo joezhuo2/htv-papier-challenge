@@ -14,6 +14,7 @@ export function useSession(src: Source) {
   const [speed, setSpeedState] = useState(1)
   const [paused, setPaused] = useState(false)
   const [ended, setEnded] = useState(false)
+  const [index, setIndex] = useState(0)
   const [now, setNow] = useState(0)
   const [epoch, setEpoch] = useState(0)
   const [status, setStatus] = useState<LiveStatus>()
@@ -66,6 +67,7 @@ export function useSession(src: Source) {
         setNow(p.position())
         setEnded(p.ended)
         setPaused(p.paused)
+        setIndex(p.index)
       } else if (src.mode === 'live') setNow(last.current.t + Date.now() - last.current.wall)
     }, 200)
     return () => clearInterval(id)
@@ -76,12 +78,21 @@ export function useSession(src: Source) {
     setPaused(p.paused)
     setNow(p.position())
     setEnded(p.ended)
+    setIndex(p.index)
   }
 
   const controls = {
     pause: () => { player.current?.pause(); sync() },
     resume: () => { player.current?.play(); sync() },
     step: () => { player.current?.step(); sync() },
+    prev: () => {
+      const p = player.current
+      if (!p) return
+      p.back()
+      dispatch({ type: 'ui/reset' })
+      p.emitted().forEach(dispatch)
+      sync()
+    },
     setSpeed: (s: number) => {
       speedRef.current = s
       setSpeedState(s)
@@ -97,7 +108,7 @@ export function useSession(src: Source) {
   }, [src.mode])
 
   return {
-    view, dispatch, controls, send, sent, speed, paused, ended, now, status, error, notices,
+    view, dispatch, controls, send, sent, speed, paused, ended, index, now, status, error, notices,
     retry: () => live.current?.retry(),
   }
 }

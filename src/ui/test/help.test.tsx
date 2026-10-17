@@ -29,7 +29,7 @@ describe('help request', () => {
     const card = screen.getByTestId('help-hq1')
     expect(within(card).getByLabelText(/Keep tuning tiles and warps/)).toHaveProperty('checked', true)
     expect(within(card).getByTestId('countdown').textContent).toBe('43s left')
-    expect(within(card).getByText(/Continuing on/).textContent).toContain('prec')
+    expect(within(card).getByTestId('help-status').textContent).toContain('meanwhile prec')
   })
 
   it('answering emits answer_help with the chosen option and note', () => {
@@ -47,6 +47,14 @@ describe('help request', () => {
     render(<HelpCard view={view} hv={view.helps[0]} now={97000 + 46000} sent={[]} onSend={() => {}} />)
     expect(screen.getByTestId('countdown').textContent).toBe('deadline passed')
     expect(screen.getByRole('status').textContent).toBe('Proceeding on assumption: Keep tuning tiles and warps')
+  })
+
+  it('labels summaries written while another branch waits as meanwhile', () => {
+    render(<App source={{ mode: 'mock' }} />)
+    at(111000)
+    const cards = screen.getAllByTestId('summary-card')
+    expect(within(cards.at(-1)!).getByTestId('meanwhile').textContent).toBe('meanwhile, fast waits on Speed')
+    expect(within(cards.at(-2)!).queryByTestId('meanwhile')).toBeNull()
   })
 
   it('clears the badge, unblocks the branch and logs a plan change once answered', () => {

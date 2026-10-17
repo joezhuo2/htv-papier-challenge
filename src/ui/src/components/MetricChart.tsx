@@ -1,6 +1,6 @@
 import type { KeyboardEvent } from 'react'
 import type { View } from '../state/reducer'
-import { predictedLatency, runOf, sci, times } from '../state/derive'
+import { lensName, predictedLatency, runOf, sci, times } from '../state/derive'
 import { useSize } from '../useSize'
 
 interface Props { view: View; onSelectRun: (r: string) => void }
@@ -36,7 +36,7 @@ export function MetricChart({ view, onSelectRun }: Props) {
   const maxY = Math.max(eager ? sp(eager) : 1, ...measured, ...ghosts.map(g => g.value), 2) * 1.12
   const step = niceStep(maxY)
 
-  const m = { l: 44, r: 72, t: width < 560 ? 58 : 40, b: 28 }
+  const m = { l: 44, r: 92, t: width < 760 ? 62 : 40, b: 28 }
   const iw = Math.max(width - m.l - m.r, 40)
   const ih = Math.max(height - m.t - m.b, 40)
   const x = (i: number) => m.l + (slots === 1 ? iw / 2 : (i + 0.5) * (iw / slots))
@@ -52,9 +52,11 @@ export function MetricChart({ view, onSelectRun }: Props) {
       <div className="panel-head">
         <span>Speedup vs naive Triton, higher is better</span>
         <span className="legend" aria-label="legend">
-          <svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.5" fill="var(--surface)" stroke="var(--muted)" strokeWidth="1.5" /></svg>predicted
-          <svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.5" fill="var(--ink)" /></svg>measured
-          <svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.5" fill="var(--surface)" stroke="var(--ink)" /><path d="M3.5 3.5 l5 5 m0 -5 l-5 5" stroke="var(--rejected)" strokeWidth="1.4" /></svg>rejected
+          <span className="entry"><svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.5" fill="var(--surface)" stroke="var(--muted)" strokeWidth="1.5" /></svg>predicted</span>
+          <span className="entry"><svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.5" fill="var(--ink)" /></svg>measured</span>
+          <span className="entry"><svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.5" fill="var(--surface)" stroke="var(--ink)" /><path d="M6 1.5 A4.5 4.5 0 0 0 6 10.5 Z" fill="var(--ink)" /></svg>inconclusive</span>
+          <span className="entry"><svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.5" fill="var(--surface)" stroke="var(--ink)" strokeDasharray="1.5 1.5" /></svg>provisional</span>
+          <span className="entry"><svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.5" fill="var(--surface)" stroke="var(--ink)" /><path d="M3.5 3.5 l5 5 m0 -5 l-5 5" stroke="var(--rejected)" strokeWidth="1.4" /></svg>rejected</span>
         </span>
       </div>
       {!naive ? <p className="empty" style={{ padding: '32px 12px' }}>No runs yet.</p> : (
@@ -86,10 +88,10 @@ export function MetricChart({ view, onSelectRun }: Props) {
             const done = g.run?.metrics
             const gy = y(g.value)
             return (
-              <g key={g.h} data-testid={`ghost-${g.h}`} data-resolved={done ? 'true' : 'false'}>
+              <g key={g.h} data-testid={`ghost-${g.h}`} data-resolved={g.run?.finished !== undefined ? 'true' : 'false'}>
                 {done ? <line x1={x(i)} x2={x(i)} y1={gy} y2={y(sp(done.latency_ms))} stroke="var(--muted)" strokeWidth="1" /> : null}
                 <circle cx={x(i)} cy={gy} r="6" fill="var(--surface)" stroke="var(--muted)" strokeWidth="1.5" opacity={done ? 0.8 : 1} />
-                {!done && !crowded ? (
+                {!done && !crowded && !g.run?.failed ? (
                   <text x={x(i) + 10} y={gy + 4} fontSize="11">{g.h} predicted at least {times(g.value)}</text>
                 ) : null}
               </g>
@@ -103,7 +105,9 @@ export function MetricChart({ view, onSelectRun }: Props) {
             const cx = x(r.index), cy = y(v)
             return (
               <g key={r.id} {...press(() => onSelectRun(r.id))} data-testid={`point-${r.id}`} aria-label={`${r.id} ${times(v)} ${final ?? 'pending verdict'}`}>
-                <circle className="hit" cx={cx} cy={cy} r={sel ? 6 : 5} fill={final === 'confirmed' ? 'var(--ink)' : 'var(--surface)'} stroke="var(--ink)" strokeWidth={sel ? 2 : 1} strokeDasharray={vd?.provisional ? '1.5 1.5' : undefined} />
+                {sel ? <circle cx={cx} cy={cy} r="9.5" fill="none" stroke="var(--ink)" strokeWidth="1" /> : null}
+                <circle className="hit" cx={cx} cy={cy} r="5" fill={final === 'confirmed' ? 'var(--ink)' : 'var(--surface)'} stroke="var(--ink)" strokeWidth="1" strokeDasharray={vd?.provisional ? '1.5 1.5' : undefined} />
+                {final === 'inconclusive' ? <path d={`M${cx} ${cy - 5} A5 5 0 0 0 ${cx} ${cy + 5} Z`} fill="var(--ink)" /> : null}
                 {final === 'rejected' ? <path d={`M${cx - 3} ${cy - 3} l6 6 m0 -6 l-6 6`} stroke="var(--rejected)" strokeWidth="1.4" /> : null}
                 {!crowded || sel || r.id === lastRun ? <text x={cx + 9} y={cy - 6} fontSize="11">{times(v)}</text> : null}
               </g>
@@ -122,37 +126,49 @@ export function AdvPanel({ view }: { view: View }) {
   const [ref, { width, height }] = useSize<HTMLDivElement>({ width: 220, height: 200 })
   const done = view.runs.filter(r => r.metrics)
   const sel = runOf(view, view.selected.run) ?? done.at(-1)
+  // adversarial error is measured on every run but only revealed once the active bound (latest verdict) gates it
+  const gate = view.bound?.adversarial ?? null
   const lo = -4.5, hi = -1
   const m = { l: 40, r: 16, t: 44, b: 26 }
   const ih = Math.max(height - m.t - m.b, 40)
   const iw = Math.max(width - m.l - m.r, 40)
   const y = (v: number) => m.t + ((hi - Math.min(hi, Math.max(lo, Math.log10(v)))) / (hi - lo)) * ih
   const x = (i: number) => m.l + (done.length <= 1 ? iw / 2 : (i / (done.length - 1)) * iw)
-  const bound = 1e-3
+  const bound = gate ?? 1e-3
 
   return (
     <div className="chart adv" ref={ref} data-testid="adv-panel">
-      <span className="panel-title">Adversarial error{sel ? `, ${sel.id}` : ''}</span>
-      {!sel?.metrics ? <p className="empty" style={{ padding: '32px 12px' }}>No runs yet.</p> : (
+      <span className="panel-title">Adversarial error by run</span>
+      {!sel?.metrics ? <p className="empty" style={{ padding: '32px 12px' }}>No runs yet.</p> : gate === null ? (
+        <p className="empty" style={{ padding: '36px 12px' }} data-testid="adv-ungated">Not gated under the current lenses. It is measured on every run and shown here once the Precision lens sets a bound.</p>
+      ) : (
         <svg width={width} height={height} role="img" aria-label={`adversarial error ${sel.id} ${sci(sel.metrics.adv_error)}`}>
           {[-4, -3, -2, -1].map(e => (
             <text key={e} x={m.l - 6} y={y(10 ** e) + 4} fontSize="11" textAnchor="end" fill="var(--muted)">1e{e}</text>
           ))}
           <line x1={m.l} x2={m.l + iw} y1={y(bound)} y2={y(bound)} stroke="var(--ink)" strokeDasharray="4 4" />
-          <text x={m.l + 4} y={y(bound) - 4} fontSize="11">bound 1e-3</text>
+          <text x={m.l + 4} y={y(bound) - 4} fontSize="11">bound {sci(bound)}, set by {lensName(view.bound!.set_by)}</text>
           {done.map((r, i) => {
-            const on = r.id === sel.id
+            const on = r.id === view.selected.run
             const v = r.metrics!.adv_error
+            const over = v > bound
+            const cx = x(i), cy = y(v)
+            const left = cx > m.l + iw * (over ? 0.3 : 0.5)
             return (
-              <g key={r.id}>
-                <circle cx={x(i)} cy={y(v)} r={on ? 5 : 3} fill={on ? 'var(--ink)' : '#B9B2A4'} />
-                {on ? (
-                  <text x={x(i) + (x(i) > m.l + iw / 2 ? -9 : 9)} y={y(v) + 4} fontSize="11" textAnchor={x(i) > m.l + iw / 2 ? 'end' : 'start'}>
-                    {sci(v)}{v > bound ? ' over' : ''}
+              <g key={r.id} data-testid={`adv-${r.id}`} data-over={over ? 'true' : 'false'}>
+                {on ? <circle cx={cx} cy={cy} r="8.5" fill="none" stroke="var(--ink)" strokeWidth="1" /> : null}
+                {over
+                  ? <path d={`M${cx - 4} ${cy - 4} l8 8 m0 -8 l-8 8`} stroke="var(--rejected)" strokeWidth="1.6" strokeLinecap="round" />
+                  : <circle cx={cx} cy={cy} r={on ? 4 : 3} fill={on ? 'var(--ink)' : '#9A9384'} />}
+                {over ? (
+                  <text x={Math.min(Math.max(cx, m.l + 70), m.l + iw - 70)} y={cy - 10} fontSize="11" textAnchor="middle" fill="var(--rejected)">
+                    {r.id} {sci(v)} over bound
                   </text>
+                ) : on ? (
+                  <text x={cx + (left ? -11 : 11)} y={cy + 4} fontSize="11" textAnchor={left ? 'end' : 'start'}>{sci(v)}</text>
                 ) : null}
                 {on || done.length < 2 || iw / (done.length - 1) >= 26 ? (
-                  <text x={x(i)} y={m.t + ih + 16} fontSize="10" textAnchor="middle" className="mono" fill={on ? 'var(--ink)' : 'var(--muted)'}>{r.id}</text>
+                  <text x={cx} y={m.t + ih + 16} fontSize="10" textAnchor="middle" className="mono" fill={on ? 'var(--ink)' : 'var(--muted)'} fontWeight={on ? 600 : 400}>{r.id}</text>
                 ) : null}
               </g>
             )

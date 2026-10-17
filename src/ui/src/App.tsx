@@ -12,6 +12,7 @@ import { RunDetail } from './components/RunDetail'
 import { HelpCard } from './components/HelpCard'
 import { PostMortemCard } from './components/PostMortem'
 import { Banner } from './components/Banner'
+import { PapiersPanel } from './components/PapiersPanel'
 import { HybridCard, Ledger, ReportView } from './components/Tier2'
 import { clock, latestRun } from './state/derive'
 
@@ -44,6 +45,7 @@ export function App({ source }: { source: Source }) {
       else if (source.mode === 'live') return
       else if (e.key === ' ') (s.paused ? controls.resume : controls.pause)()
       else if (e.key === 'ArrowRight') controls.step()
+      else if (e.key === 'ArrowLeft') controls.prev()
       else return
       e.preventDefault()
     }
@@ -61,6 +63,7 @@ export function App({ source }: { source: Source }) {
       <TopBar
         mode={source.mode} mock={view.mock} now={s.now} paused={s.paused} ended={s.ended} speed={s.speed}
         onPause={controls.pause} onResume={controls.resume} onStep={controls.step}
+        onPrev={controls.prev} canPrev={s.index > 0} onMode={m => { window.location.search = `?mode=${m}` }}
         onSpeed={controls.setSpeed} onRestart={controls.restart}
       />
       <div className="accent-line" />
@@ -71,6 +74,8 @@ export function App({ source }: { source: Source }) {
           {open.map(h => <HelpCard key={h.help.id} view={view} hv={h} now={s.now} sent={s.sent} onSend={s.send} />)}
           <DirectivePanel view={view} sent={s.sent} onSend={s.send} onSelectBranch={selectBranch} />
           {answered.map(h => <HelpCard key={h.help.id} view={view} hv={h} now={s.now} sent={s.sent} onSend={s.send} />)}
+          <hr className="divider" />
+          <PapiersPanel view={view} />
         </aside>
         <section className="col center" aria-label="research">
           {view.report ? (

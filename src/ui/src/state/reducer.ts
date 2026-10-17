@@ -1,8 +1,8 @@
 import type {
-  Branch, Check, DemoEvent, Directive, HelpRequest, Hypothesis, LedgerEntry, Lens, Metrics, Params, PostMortem, Report, Summary, Verdict,
+  Bound, Branch, Check, DemoEvent, Directive, HelpRequest, Hypothesis, LedgerEntry, Lens, Metrics, Params, PostMortem, Report, Summary, Verdict,
 } from '@contract/types'
 
-export interface VerdictView { verdict: Verdict; provisional: boolean; reason: string; checks: Check[]; t: number }
+export interface VerdictView { verdict: Verdict; provisional: boolean; reason: string; checks: Check[]; t: number; bound: Bound }
 
 export interface BranchView extends Branch { t: number; reason?: string; index: number }
 
@@ -18,6 +18,7 @@ export interface RunView {
   params?: Params
   metrics?: Metrics
   assumption?: boolean
+  failed?: boolean
 }
 
 export interface DirectiveView extends Directive { t: number; affected?: string; mock: boolean }
@@ -32,7 +33,10 @@ export interface HelpView {
   expired: boolean
 }
 
-export interface NoteView { id: string; title: string; excerpt: string; t: number }
+export interface NoteView { id: string; title: string; excerpt: string; t: number; query?: string }
+
+// every Papiers read in the log, with or without a returned note
+export interface ReadView { t: number; query?: string; note?: NoteView; mock: boolean }
 
 type Base = { t: number; mock: boolean }
 export type FeedItem = Base & (
@@ -40,7 +44,7 @@ export type FeedItem = Base & (
   | { kind: 'plan_change'; help: string; text: string }
   | { kind: 'answer'; help: string; option: string; note?: string; by: Lens }
   | { kind: 'export'; items: { kind: string; title: string; file: string }[] }
-  | { kind: 'note'; note: NoteView }
+  | { kind: 'note'; note?: NoteView; query?: string }
   | { kind: 'branch'; branch: string; reason: string }
   | { kind: 'hybrid'; branches: string[]; text: string }
   | { kind: 'report' }
@@ -59,11 +63,14 @@ export interface View {
   runs: RunView[]
   verdicts: Record<string, VerdictView>
   history: Record<string, Verdict[]>
+  trail: Record<string, VerdictView[]> // every verdict per hypothesis in order, each with the bound it was judged against
+  bound?: Bound // bound of the latest verdict, the active one
   directives: DirectiveView[]
   conflicts: ConflictView[]
   helps: HelpView[]
   postMortems: PostMortem[]
   notes: NoteView[]
+  reads: ReadView[]
   feed: FeedItem[]
   log: { t: number; text: string }[]
   report?: Report
@@ -84,8 +91,8 @@ export type Action = DemoEvent | UiAction
 
 export const initialView = (lens: Lens = 'speed'): View => ({
   t: 0, mock: false, started: false, finished: false,
-  branches: [], hypotheses: [], runs: [], verdicts: {}, history: {}, directives: [], conflicts: [], helps: [],
-  postMortems: [], notes: [], feed: [], log: [], lens, selected: {},
+  branches: [], hypotheses: [], runs: [], verdicts: {}, history: {}, trail: {}, directives: [], conflicts: [], helps: [],
+  postMortems: [], notes: [], reads: [], feed: [], log: [], lens, selected: {},
 })
 
 const setBranch = (v: View, id: string, patch: Partial<BranchView>) =>
@@ -117,8 +124,13 @@ export function reduce(prev: View, a: Action): View {
   let v: View = expire({ ...prev, t: Math.max(prev.t, e.t), mock: prev.mock || mock }, e.t)
   switch (e.type) {
     case 'papiers_context': {
-      const note = { ...e.note, t: e.t }
-      return { ...v, notes: [...v.notes, note], feed: [...v.feed, { kind: 'note', note, t: e.t, mock }] }
+      const note = e.note && { ...e.note, t: e.t, query: e.query }
+      return {
+        ...v,
+        notes: note && !v.notes.some(n => n.id === note.id) ? [...v.notes, note] : v.notes,
+        reads: [...v.reads, { t: e.t, query: e.query, note, mock }],
+        feed: [...v.feed, { kind: 'note', note, query: e.query, t: e.t, mock }],
+      }
     }
     case 'directive_added':
       return { ...v, directives: [...v.directives, { ...e.directive, t: e.t, mock }] }
@@ -145,23 +157,29 @@ export function reduce(prev: View, a: Action): View {
       return { ...v, runs: [...v.runs, { id: e.run, branch: e.branch, hypothesis: e.hypothesis, index: v.runs.length, started: e.t }] }
     case 'run_finished': {
       const assumption = v.helps.some(h => h.expired && !h.answer && h.help.blocks === e.run.branch)
-      const done = { params: e.run.params, metrics: e.run.metrics, finished: e.t, assumption }
+      // the agent sends null latency for a run that failed to compile or timed out
+      const failed = e.run.metrics.latency_ms == null
+      const done = { params: e.run.params, metrics: failed ? undefined : e.run.metrics, finished: e.t, assumption, failed }
       const known = v.runs.some(r => r.id === e.run.id)
       const runs = known
         ? v.runs.map(r => (r.id === e.run.id ? { ...r, ...done } : r))
         : [...v.runs, { id: e.run.id, branch: e.run.branch, hypothesis: e.run.hypothesis, index: v.runs.length, started: e.t, ...done }]
       return { ...v, runs }
     }
-    case 'verdict':
+    case 'verdict': {
+      const vd = { verdict: e.verdict, provisional: e.provisional, reason: e.reason, checks: e.checks, t: e.t, bound: e.bound }
       return {
         ...v,
-        verdicts: { ...v.verdicts, [e.hypothesis]: { verdict: e.verdict, provisional: e.provisional, reason: e.reason, checks: e.checks, t: e.t } },
+        verdicts: { ...v.verdicts, [e.hypothesis]: vd },
         history: { ...v.history, [e.hypothesis]: [...(v.history[e.hypothesis] ?? []), e.verdict] },
+        trail: { ...v.trail, [e.hypothesis]: [...(v.trail[e.hypothesis] ?? []), vd] },
+        bound: e.bound,
       }
+    }
     case 'post_mortem':
       return { ...v, postMortems: [...v.postMortems, e.post_mortem] }
     case 'summary': {
-      const run = [...v.runs].reverse().find(r => r.branch === e.summary.branch && r.metrics)
+      const run = [...v.runs].reverse().find(r => r.branch === e.summary.branch && r.finished !== undefined)
       const verdict = run && v.verdicts[run.hypothesis]
       return { ...v, feed: [...v.feed, { kind: 'summary', summary: e.summary, run: run?.id, hypothesis: run?.hypothesis, verdict, t: e.t, mock }] }
     }

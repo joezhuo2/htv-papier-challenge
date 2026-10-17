@@ -59,7 +59,8 @@ describe('replay mode', () => {
     expect(screen.getByText('recorded run')).toBeTruthy()
     at(200000)
     expect(screen.getAllByTestId('summary-card').length).toBe(7)
-    expect(screen.queryByText('mock')).toBeNull()
+    expect(document.querySelector('.tag.mock')).toBeNull()
+    expect(screen.getByRole('group', { name: 'data source' }).querySelector('[aria-pressed="true"]')).toBeNull()
   })
 
   it('shows a banner when the log cannot load', async () => {
@@ -87,7 +88,7 @@ describe('live mode', () => {
       socks.push(this)
     })
     render(<App source={{ mode: 'live', ws: 'ws://test/ws' }} />)
-    expect(screen.getByText('live')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'live' }).getAttribute('aria-pressed')).toBe('true')
     expect(screen.queryByRole('group', { name: 'presenter controls' })).toBeNull()
     act(() => {
       socks[0].readyState = 1
@@ -102,5 +103,8 @@ describe('live mode', () => {
     expect(screen.getByTestId('reconnect-banner').textContent).toContain('Reconnecting in 1s')
     at(1000)
     expect(socks).toHaveLength(2)
+    act(() => { socks[1].readyState = 3; socks[1].onclose!() })
+    expect(screen.getByTestId('reconnect-banner').textContent).toContain('No agent server is reachable at /ws.')
+    expect(screen.getByTestId('reconnect-banner').textContent).toContain('uv run uvicorn server.app:app --port 8000')
   })
 })

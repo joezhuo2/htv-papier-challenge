@@ -12,6 +12,9 @@ interface Props {
   onPause: () => void
   onResume: () => void
   onStep: () => void
+  onPrev: () => void
+  canPrev: boolean
+  onMode: (m: 'mock' | 'live') => void
   onSpeed: (s: number) => void
   onRestart: () => void
 }
@@ -28,7 +31,12 @@ export function TopBar(p: Props) {
           recorded run <span className="muted">idle gaps compressed</span>
         </span>
       ) : null}
-      {p.mode === 'mock' || p.mock ? <span className="tag mock">mock</span> : null}
+      <div className="toggle" role="group" aria-label="data source">
+        {(['mock', 'live'] as const).map(m => (
+          <button key={m} aria-pressed={p.mode === m} onClick={() => p.mode !== m && p.onMode(m)}>{m}</button>
+        ))}
+      </div>
+      {p.mode === 'replay' && p.mock ? <span className="tag mock">mock data</span> : null}
       <span className="spacer" />
       <span className="mono" aria-label="elapsed">{clock(p.now)}</span>
       {replay ? (
@@ -38,6 +46,7 @@ export function TopBar(p: Props) {
           ) : (
             <button onClick={p.onPause}>pause</button>
           )}
+          <button onClick={p.onPrev} disabled={!p.canPrev} title="Left arrow">prev</button>
           <button onClick={p.onStep} disabled={p.ended} title="Right arrow">step</button>
           {[1, 2, 4].map(s => (
             <button key={s} aria-pressed={p.speed === s} onClick={() => p.onSpeed(s)}>{s}x</button>
