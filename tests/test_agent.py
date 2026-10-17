@@ -100,6 +100,7 @@ REQUIRED = {
     "verdict": {"hypothesis", "verdict", "provisional", "reason", "checks", "bound"}, "post_mortem": {"post_mortem"}, "summary": {"summary"},
     "agent_log": {"text"}, "session_finished": {"ledger", "best"}, "papiers_context": set(), "findings_exported": {"items"},
     "help_requested": {"help"}, "help_answered": {"help", "option", "by"}, "plan_change": {"help", "text"}, "agent_error": {"kind", "text"},
+    "hybrid_proposed": {"branches", "text"},
 }
 HELP_KEYS = {"id", "target", "question", "evidence", "options", "default", "blocks", "deadline_s", "what_changes"}
 SUMMARY_KEYS = {"branch", "tried", "moved", "verdict", "confidence", "confidence_reason", "uncertainties", "would_change_mind", "next_step"}
@@ -248,19 +249,47 @@ def test_failure_path_fp16_provisional_under_speed_then_rejected_by_precision(tm
     assert_contract(o.log.events)
 
 
+def test_conflict_then_hybrid_proposal_approval_and_merge_run(tmp_path):
+    merged = P | {"stages": 4, "gelu": "approx"}
+    engine = Engine(TABLE | {json.dumps(merged, sort_keys=True): met(0.600, err=6.9e-4, adv=7.2e-4)})
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"gelu": "approx"}, 1.02), h(P | {"stages": 4}, 1.02), default="no json"),
+             engine=engine, main_iters=1, branch_iters=1, help_deadline_s=5)
+    proposed = lambda: bool(of(o, "hybrid_proposed"))
+    drive(o, [(judged(o, 1), SPEED), (judged(o, 2), {"type": "add_directive", "lens": "precision", "text": "Max error under 1e-3 on both batches."}),
+              (proposed, {"type": "approve_hybrid", "branches": ["prec", "speed2"]})])
+    flip = [(e["verdict"], e["provisional"]) for e in of(o, "verdict") if e["hypothesis"] == "H1"]
+    assert flip == [("confirmed", True), ("rejected", False)]
+    assert of(o, "conflict_detected")[0]["directives"] == ["d1", "d2"]
+    hy = of(o, "hybrid_proposed")[0]
+    assert hy["branches"] == ["prec", "speed2"] and "stages 3 to 4" in hy["text"] and "gelu exact to approx" in hy["text"]
+    assert types(o).index("conflict_detected") < types(o).index("hybrid_proposed")
+    merge = next(e["branch"] for e in of(o, "branch_created") if e["branch"]["id"] == "merge")
+    assert merge["parents"] == ["prec", "speed2"] and merge["label"] == "Hybrid"
+    run = next(e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["branch"] == "merge")
+    assert run["params"] == merged
+    assert next(e for e in of(o, "verdict") if e["hypothesis"] == run["id"])["verdict"] == "confirmed"
+    statuses = {(e["branch"], e["status"]) for e in of(o, "branch_status")}
+    assert {("prec", "merged"), ("speed2", "merged"), ("merge", "done")} <= statuses
+    assert_contract(o.log.events)
+
+
 def test_harness_variant_tests_fp16_when_the_agent_avoids_it(tmp_path):
     o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.05), h(P | {"gelu": "approx"}, 1.05), default="no json"),
              main_iters=1, branch_iters=3)
     run_with(o, [(1, "speed", "Go faster.")])
-    variant = next(e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["params"]["acc"] == "fp16")
-    assert "Harness variant" in variant["note"]
+    on_speed = [e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["branch"] == "speed"]
+    variant = on_speed[0]
+    assert variant["params"] == P | {"acc": "fp16"} and variant["note"].startswith("Harness-seeded variant, not proposed by the model")
+    assert "Section" not in variant["note"]
+    assert variant["claim"] == ("FP16 accumulation on 128x128x32 tiles, 4 warps, 3 stages, fp16 accumulation, exact GELU cuts latency by at least 1.20x "
+                                "against the same config with FP32 accumulation, with standard max error under 2.0e-2, the Speed lens bound.")
     v = next(e for e in of(o, "verdict") if e["hypothesis"] == variant["id"])
     assert (v["verdict"], v["provisional"]) == ("confirmed", True)
 
 
 def test_precision_directive_rejects_a_provisional_result_without_a_new_run(tmp_path):
     o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"block_n": 64}, 1.2), h(P | {"stages": 4}, 1.05), h(P | {"gelu": "approx"}, 1.05)),
-             main_iters=1, branch_iters=1)
+             main_iters=1, branch_iters=1, help_deadline_s=0.3)
     run_with(o, [(1, "speed", "Push throughput harder."), (2, "precision", "Max error under 1e-3 on the adversarial batch too.")])
     h1 = [e for e in of(o, "verdict") if e["hypothesis"] == "H1"]
     assert [(e["verdict"], e["provisional"]) for e in h1] == [("confirmed", True), ("rejected", False)]
@@ -276,14 +305,14 @@ def test_explanation_uses_the_strong_model_when_it_answers(tmp_path):
     o = make(tmp_path, Asker(h(P | {"acc": "fp16"}, 1.3, "naive"), strong_ok=True), main_iters=1)
     o.run()
     assert of(o, "post_mortem")[0]["post_mortem"]["cause"] == "Mechanism sentence one. Sentence two."
-    assert of(o, "summary")[0]["summary"]["uncertainties"] == ["one shape only"]
+    assert not any(tag.startswith("sum-") for _, tag, _ in o.ask.calls)  # summaries are computed in code
 
 
-def test_unsupported_commands_are_logged(tmp_path):
+def test_hybrid_approval_without_a_proposal_is_ignored(tmp_path):
     o = make(tmp_path, Asker(h(P, 2.0, "naive")), main_iters=1)
     o.command({"type": "approve_hybrid", "branches": ["a", "b"]})
     o.run()
-    assert any("approve_hybrid" in e["text"] for e in of(o, "agent_log"))
+    assert "merge" not in o.branches and "approve_hybrid" in (tmp_path / "debug.log").read_text()
 
 
 # ---- server ----
@@ -338,10 +367,10 @@ def test_server_command_validation():
 
 
 def test_speedup_miss_is_not_a_branch_failure(tmp_path):
-    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.5), default="no json"), main_iters=1, branch_iters=3)
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.5), h(P | {"warps": 8}, 1.3), default="no json"), main_iters=1, branch_iters=3)
     run_with(o, [(1, "speed", "Faster.")])
     ev = o.log.events
-    v1 = next(i for i, e in enumerate(ev) if e["type"] == "verdict" and e["hypothesis"] == "H1")
+    v1 = next(i for i, e in enumerate(ev) if e["type"] == "verdict" and e["hypothesis"] == "H2")
     assert ev[v1]["verdict"] == "rejected" and ev[v1]["checks"][0]["pass"] is False
     nxt = next(i for i, e in enumerate(ev) if i > v1 and e["type"] == "hypothesis_proposed")
     between = [e["type"] for e in ev[v1:nxt]]
@@ -415,12 +444,15 @@ def test_implausible_predictions_are_refused():
     assert hyp.parse(h(P, 3.0, "naive"))[0]
 
 
-def test_compile_failure_is_a_miss_not_a_fork(tmp_path):
-    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"block_k": 128}, 1.1), default="no json"), main_iters=1, branch_iters=2)
+def test_compile_failure_is_a_miss_with_a_templated_post_mortem(tmp_path):
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"block_k": 64}, 1.1), strong_ok=True, default="no json"), main_iters=1, branch_iters=3)
     run_with(o, [(1, "speed", "Faster.")])
-    v1 = next(e for e in of(o, "verdict") if e["hypothesis"] == "H1")
-    assert v1["verdict"] == "rejected" and v1["checks"][0]["name"] == "compiles and runs"
-    assert not [e for e in of(o, "post_mortem") if e["post_mortem"]["hypothesis"] == "H1"]
+    v = next(e for e in of(o, "verdict") if e["hypothesis"] == "H2")
+    assert v["verdict"] == "rejected" and v["checks"][0]["name"] == "compiles and runs"
+    pm = next(e["post_mortem"] for e in of(o, "post_mortem") if e["post_mortem"]["hypothesis"] == "H2")
+    assert pm["sweep"] == [] and pm["cause"].startswith("The run failed before measuring")
+    assert not any(tag == "pm-H2" for _, tag, _ in o.ask.calls)
+    assert "speed2" not in o.branches
 
 
 # ---- help requests ----
@@ -464,13 +496,13 @@ def test_inconclusive_verdict_asks_the_branch_lens_and_blocks_only_that_branch(t
     run_with(o, [(1, "speed", "Faster.")])
     req = of(o, "help_requested")[0]["help"]
     assert req["target"] == "speed" and req["blocks"] == "speed" and req["default"] == "tile_search"
-    assert "inside the noise band" in req["question"] and req["evidence"][0].startswith("r2:")
+    assert "inside the noise band" in req["question"] and req["evidence"][0].startswith("r3:")
     ev = o.log.events
     i = ev.index(of(o, "help_requested")[0])
     assert ev[i + 1] == {**ev[i + 1], "type": "branch_status", "branch": "speed", "status": "waiting_on_human"}
-    assert of(o, "verdict")[1]["verdict"] == "inconclusive"
+    assert of(o, "verdict")[2]["verdict"] == "inconclusive"
     # no answer: the deadline passes and the branch proceeds on the default
-    pc = of(o, "plan_change")[0]
+    pc = next(e for e in of(o, "plan_change") if e["help"] == "hq1")
     assert pc["help"] == "hq1" and "default assumption" in pc["text"]
     assert ("speed", "running") in [(e["branch"], e["status"]) for e in ev[i:] if e["type"] == "branch_status"]
     assert_contract(ev)
@@ -481,10 +513,10 @@ def test_suggestion_answer_becomes_the_next_hypothesis_and_is_exported(tmp_path)
     drive(o, [(judged(o, 1), SPEED), (asked(o), {"type": "answer_help", "help": "hq1", "option": "other", "note": "Try the tanh approximate GELU.", "by": "speed"})])
     ans = of(o, "help_answered")[0]
     assert ans == {**ans, "help": "hq1", "option": "other", "note": "Try the tanh approximate GELU.", "by": "speed"}
-    assert "suggests" in of(o, "plan_change")[0]["text"]
+    assert "suggests" in next(e for e in of(o, "plan_change") if e["help"] == "hq1")["text"]
     nxt = next(e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["t"] >= ans["t"])
     assert nxt["note"] == "Suggested by the Speed lens in answer to hq1" and nxt["params"]["gelu"] == "approx"
-    prompt = next(m for model, tag, m in o.ask.calls if tag.startswith("speed-2"))
+    prompt = next(m for model, tag, m in o.ask.calls if tag.startswith("speed-3"))
     assert "Try the tanh approximate GELU." in prompt[1]["content"]
     files = [i["file"] for e in of(o, "findings_exported") for i in e["items"]]
     assert "exports/hq1-answer.md" in files
@@ -499,7 +531,7 @@ def test_accept_closes_the_branch_and_unknown_answers_are_ignored(tmp_path):
     assert len(of(o, "help_answered")) == 1
     assert sum("Ignored an answer" in e["text"] for e in of(o, "agent_log")) == 2
     assert ("speed", "done") in [(e["branch"], e["status"]) for e in of(o, "branch_status")]
-    assert "accepts" in of(o, "plan_change")[0]["text"]
+    assert "accepts" in next(e for e in of(o, "plan_change") if e["help"] == "hq1")["text"]
 
 
 # ---- findings export ----
@@ -519,23 +551,22 @@ def test_failure_and_session_end_export_markdown_files(tmp_path):
     assert of(o, "findings_exported")[-1]["t"] <= of(o, "session_finished")[0]["t"]
 
 
-def test_seeded_variant_still_runs_on_speed_when_fp16_was_only_tried_on_main(tmp_path):
+def test_seeded_variant_is_the_first_speed_hypothesis_even_when_fp16_was_tried_on_main(tmp_path):
     fp16_main = P | {"acc": "fp16", "warps": 2}
     o = make(tmp_path, Asker(h(fp16_main, 2.0, "naive"), h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.05), default="no json"), main_iters=2, branch_iters=3)
     run_with(o, [(2, "speed", "Faster.")])
-    on_speed = [e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["branch"] == "speed"]
-    variant = next(x for x in on_speed if x["params"]["acc"] == "fp16")
-    assert "Harness variant" in variant["note"] and variant["prediction"]["min_speedup"] == 1.2
+    first = next(e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["branch"] == "speed")
+    assert first["params"] == P | {"acc": "fp16"} and first["prediction"]["min_speedup"] == 1.2
 
 
-def test_seeded_variant_waits_for_a_confirmed_configuration(tmp_path):
-    # H0 misses an over-optimistic prediction, so nothing is confirmed and FP16 must not land on the naive tiles
-    o = make(tmp_path, Asker(h(P, 5.0, "naive"), h(P | {"stages": 4}, 9.0, "naive"), h(P | {"warps": 8}, 2.0, "naive"), h(P | {"gelu": "approx"}, 1.0),
-                             default="no json"), main_iters=1, branch_iters=4)
+def test_seeded_variant_uses_the_fastest_correct_run_when_nothing_is_confirmed(tmp_path):
+    # H0 misses an over-optimistic prediction, so nothing is confirmed, and the variant goes on H0's correct tiles, not the naive ones
+    o = make(tmp_path, Asker(h(P, 5.0, "naive"), h(P | {"stages": 4}, 1.05), default="no json"), main_iters=1, branch_iters=2)
     run_with(o, [(1, "speed", "Faster.")])
     on_speed = [e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["branch"] == "speed"]
-    variant = next(x for x in on_speed if x["params"]["acc"] == "fp16")
-    assert variant["params"]["block_m"] == 128 and on_speed.index(variant) == 2
+    assert on_speed[0]["params"] == P | {"acc": "fp16"}
+    parent = next(spec for spec, _ in o.engine.calls if spec.get("params") == P | {"acc": "fp16"})["refs"]["parent"]
+    assert parent["params"] == P
 
 
 def test_runs_request_same_window_references_including_the_parent(tmp_path):
@@ -623,11 +654,15 @@ def test_gemini_first_then_nim_fallback_is_logged(tmp_path, monkeypatch):
                 raise TimeoutError("gemini slow")
             return {"text": f"from {model}"}
 
-    monkeypatch.setattr(session, "Client", lambda timeout, max_retries, provider: FakeClient(provider))
-    log = Log(tmp_path / "events.jsonl")
-    ask = session.asker(log, {"fast": [("gemini", "g-fast"), ("nim", "n-fast")]})
+    calls = []
+    monkeypatch.setattr(session, "Client", lambda timeout, max_retries, provider: calls.append(provider) or FakeClient(provider))
+    debug = tmp_path / "debug.log"
+    ask = session.asker(debug, {"fast": [("gemini", "g-fast"), ("nim", "n-fast")]})
     assert ask([], "fast", "t") == "from n-fast"
-    assert "g-fast failed (TimeoutError), answered by n-fast on nim." in log.events[-1]["text"]
+    assert ask([], "fast", "t") == "from n-fast"
+    text = debug.read_text()
+    assert "g-fast on gemini failed (TimeoutError: gemini slow), skipped for 300 s" in text and "answered by n-fast on nim" in text
+    assert text.count("g-fast on gemini failed") == 1  # the second call skips the failed route
 
 
 def test_provider_chain_tries_omniroute_then_gemini_when_its_key_is_set_then_nim(monkeypatch):
@@ -680,8 +715,11 @@ def test_record_start_lifts_the_live_cap_and_saves_the_log_as_a_replay(tmp_path,
             time.sleep(0.02)
     assert len(of(o, "hypothesis_proposed")) == 3
     assert of(o, "agent_log")[2]["text"].startswith("Recording mode: the full loop for up to 3 hypotheses")
-    assert "?mode=replay&file=/runs/sessions/test/events.jsonl" in of(o, "agent_log")[-1]["text"]
     assert types(o)[-1] == "session_finished"
+    replay = [json.loads(x) for x in (tmp_path / "replay.jsonl").read_text().splitlines()]
+    assert replay == o.log.events and replay[-1]["type"] == "session_finished"
+    assert "/runs/sessions/test/replay.jsonl" in (tmp_path / "debug.log").read_text()
+    assert not any("replay" in e["text"] for e in of(o, "agent_log"))
 
 
 def test_prompt_quotes_the_measured_headroom():
@@ -763,5 +801,67 @@ def test_recording_runs_the_speed_branch_after_a_directive_and_never_finishes_on
     run_with(o, [(1, "speed", "Push throughput harder.")])
     hyps = [e["hypothesis"] for e in of(o, "hypothesis_proposed")]
     assert [x["branch"] for x in hyps] == ["main", "speed", "speed"]
-    assert hyps[2]["params"]["acc"] == "fp16"
+    assert hyps[1]["params"]["acc"] == "fp16"
     assert not any("proceeding on the default assumption" in e["text"] for e in of(o, "agent_log"))
+
+
+def test_shared_memory_budget_is_checked_before_any_run():
+    from harness.kernel import SMEM_LIMIT, Params, smem_bytes
+    assert smem_bytes(Params(128, 256, 64, 8, 4)) == 147456 and smem_bytes(Params(256, 256, 64, 8, 4)) == 196608  # the two logged failures
+    assert smem_bytes(Params(128, 128, 64, 4, 4)) == 98304 <= SMEM_LIMIT
+    h_, why = hyp.parse(h(P | {"block_n": 256, "block_k": 64, "warps": 8, "stages": 4}))
+    assert h_ is None and "147456 bytes" in why and "101376" in why
+    assert "101376 bytes" in hyp.SYSTEM
+
+
+def test_out_of_resources_post_mortem_is_templated_with_the_arithmetic():
+    from agent.orchestrator import failure_cause
+    from harness.kernel import Params
+    m = Metrics(error="OutOfResources: out of resource: shared memory, Required: 147456, Hardware limit: 101376.")
+    pm = failure_cause(Params(128, 256, 64, 8, 4), m)
+    assert pm["cause"].startswith("Shared memory: (stages 4 - 1) x (128x64 + 64x256) x 2 bytes = 147456 bytes, over the 101376 byte limit")
+    assert pm["pivot"] == "Keep the tiles with 3 stages (98304 bytes)."
+
+
+def test_summary_fields_follow_the_verdict_and_the_measured_spread(tmp_path):
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"block_k": 64}, 1.1), default="no json"), main_iters=2)
+    o.run()
+    ok, failed = [e["summary"] for e in of(o, "summary")]
+    assert ok["confidence"] == "high" and "clears the 2.00x threshold" in ok["confidence_reason"] and "1.6%" not in ok["confidence_reason"]
+    assert failed["confidence"] == "low" and "no measurement" in failed["confidence_reason"] and "cleared" not in failed["confidence_reason"]
+    assert "post-mortem ruled out" not in failed["next_step"] or "H1 post-mortem" in failed["next_step"]
+    assert "Papiers note" not in ok["tried"]
+
+
+def test_directive_applies_while_a_model_call_is_in_flight(tmp_path):
+    gate = threading.Event()
+    script = [h(P, 2.0, "naive")]
+
+    def slow(messages, model, tag):
+        if tag == "main-2-0":
+            gate.wait(10)
+        return script.pop(0) if script else "no json"
+
+    o = make(tmp_path, slow, main_iters=2)
+    t = threading.Thread(target=o.run)
+    t.start()
+    wait_for(o, lambda: len(of(o, "summary")) == 1)
+    time.sleep(0.2)
+    o.command({"type": "add_directive", "lens": "speed", "text": "Faster."})
+    wait_for(o, lambda: bool(of(o, "directive_added")), timeout=2)  # applied while main-2-0 is still waiting on the model
+    gate.set()
+    t.join(5)
+
+
+def test_a_duplicate_answer_is_ignored_silently_and_the_cap_reports_cut_promises(tmp_path):
+    o = help_session(tmp_path, max_hyps=3)
+    ans = {"type": "answer_help", "help": "hq1", "option": "tile_search", "by": "speed"}
+    drive(o, [(judged(o, 1), SPEED), (asked(o), ans), (lambda: bool(of(o, "help_answered")), ans)])
+    assert len(of(o, "help_answered")) == 1 and not any("Ignored an answer" in e["text"] for e in of(o, "agent_log"))
+    assert "duplicate answer to hq1" in (tmp_path / "debug.log").read_text()
+    cut = [e for e in of(o, "plan_change") if "cap ended the session" in e["text"]]
+    assert cut and cut[0]["help"] == "hq1"
+    ev = o.log.events
+    last_status = {e["branch"]: e["status"] for e in ev if e["type"] == "branch_status"}
+    assert all(s not in ("running", "waiting_on_human") for s in last_status.values()) and set(last_status) == set(o.branches)
+    assert types(o)[-1] == "session_finished"
