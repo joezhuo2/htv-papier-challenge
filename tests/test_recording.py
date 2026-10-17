@@ -134,7 +134,7 @@ def test_an_inconclusive_run_gets_a_code_generated_post_mortem(tmp_path):
     assert o.hyps[-1].judgment.verdict == "inconclusive"
     pm = of(o, "post_mortem")[-1]["post_mortem"]
     assert pm["hypothesis"] == "H2" and pm["cause"].startswith("It ran at 1.03x vs its parent, inside the +/- 9.0% noise band around the predicted 1.05x")
-    assert pm["pivot"] == "Rerun gelu exact to approx with more timing rounds, or keep the parent and change a knob the ledger has not tried yet."
+    assert pm["pivot"] == "Rerun gelu exact to approx with more timing rounds, or keep the parent and try block_n 128 to 64."
     assert not o.avoid  # an inconclusive run rules nothing out
     assert types(o).index("post_mortem") < types(o).index("help_requested")
 

@@ -206,9 +206,10 @@ KNOB_EFFECT = {
 }
 
 
-def miss_cause(p: Params, base: Params, m: Metrics, parent: Metrics, speedup, pred, ref, noise=None):
+def miss_cause(p: Params, base: Params, m: Metrics, parent: Metrics, speedup, pred, ref, noise=None, untried=None):
     """Templated post-mortem for a speed miss: the likely cause from registers, spills and the parameter diff. noise is the decision
-    band of an inconclusive run, whose speedup sits inside it."""
+    band of an inconclusive run, whose speedup sits inside it. untried is a concrete next change ("block_n 128 to 64") or None."""
+    nxt = f" and try {untried} next." if untried else "."
     vs = "naive" if ref == "naive" else "its parent"
     regs = (f"{parent.n_regs} to {m.n_regs} registers and {parent.n_spills} to {m.n_spills} spilled words per thread"
             if m.n_regs is not None and parent.n_regs is not None else
@@ -233,7 +234,7 @@ def miss_cause(p: Params, base: Params, m: Metrics, parent: Metrics, speedup, pr
         if speedup * (1 - (noise or 0.0)) <= 1:  # not clearly faster: the band around the speedup still reaches 1.0
             why = (f"{fell}, so {change(base, p)} did relieve register pressure, but that was not the bottleneck"
                    + (f"; what the change costs instead: {'; '.join(effects)}" if effects else ""))
-            pivot = f"Revert {change(base, p)}: register pressure is not what limits this config."
+            pivot = f"Revert {change(base, p)}: register pressure is not what limits this config" + nxt
         else:
             why = f"{fell}, which likely explains the gain, though it is smaller than predicted"
             pivot = f"Keep {change(base, p)} and look for the next limit beyond registers."
@@ -242,12 +243,12 @@ def miss_cause(p: Params, base: Params, m: Metrics, parent: Metrics, speedup, pr
                   if m.n_regs is not None and parent.n_regs is not None else "")
         why = (f"registers and spills barely moved{counts}, so the change itself is the likely cause: {'; '.join(effects)}" if effects
                else f"registers and spills barely moved{counts}, so {change(base, p)} itself is the likely cause")
-        pivot = f"Revert {change(base, p)} and change a knob the ledger has not tried yet."
+        pivot = f"Revert {change(base, p)}" + nxt
     if noise is not None:
         gain = (f"It ran at {speedup:.2f}x vs {vs}, inside the +/- {noise * 100:.1f}% noise band around the predicted {pred['min_speedup']:.2f}x, "
                 "so this run cannot tell whether the change clears the prediction")
         if not (ds and m.n_spills > parent.n_spills) and per <= limit:
-            pivot = f"Rerun {change(base, p)} with more timing rounds, or keep the parent and change a knob the ledger has not tried yet."
+            pivot = f"Rerun {change(base, p)} with more timing rounds" + (f", or keep the parent and try {untried}." if untried else ".")
     elif speedup >= 1:
         gain = f"It ran at {speedup:.2f}x vs {vs}, faster but short of the predicted {pred['min_speedup']:.2f}x, so the change helps less than claimed"
     else:
@@ -1367,6 +1368,22 @@ class Orchestrator:
         """The run that lost with change d and nothing outside its direction, or None when d only lost together with other changes."""
         return next((x for x in xs if {direction(k) for k, _, _ in self.blamed(x)[0]} == {direction(d[0])}), None)
 
+    def untried(self, base):
+        """A concrete next change from base, as "block_n 128 to 64": halve or double one tile size or warps, or move stages by one, where no
+        run made that change, no losing direction rules it out, and the config fits registers and shared memory. None when nothing fits."""
+        made = {(k, getattr(self.baseline(h)[0], k), getattr(h.params, k)) for h in self.hyps for k in self.knobs(h)}
+        lost, ran = self.losing(), {h.params for h in self.hyps}
+        for k in ("block_n", "block_m", "block_k", "warps", "stages"):
+            a = getattr(base, k)
+            for b in (a - 1, a + 1) if k == "stages" else (a // 2, a * 2):
+                try:
+                    p = replace(base, **{k: b})
+                except ValueError:
+                    continue
+                if (k, a, b) not in made and (k, a, b) not in lost and p not in ran and acc_per_thread(p) <= ACC_LIMIT[p.acc] and smem_bytes(p) <= SMEM_LIMIT:
+                    return f"{k} {a} to {b}"
+        return None
+
     def refused_lines(self):
         return [f"{k} {a} to {b} (" + (f"lost alone in {e.id}, {self.outcome(e)}" if (e := self.isolated((k, a, b), xs))
                                        else f"lost in {', '.join(x.id for x in xs)}") + ")" for (k, a, b), xs in self.losing().items()]
@@ -1694,7 +1711,8 @@ class Orchestrator:
             vs = "naive" if h.ref == "naive" else "the parent"
             pm = {"hypothesis": h.id, "expected": expected, "sweep": [],
                   "observed": f"{h.speedup:.2f}x vs {vs} (+/- {h.speedup * h.noise:.2f}x) at {m.latency_ms:.3f} ms, standard error {sci(m.max_error)}."} \
-                | miss_cause(h.params, bp, m, bm, h.speedup, h.prediction, h.ref, h.noise if h.judgment.verdict == "inconclusive" else None)
+                | miss_cause(h.params, bp, m, bm, h.speedup, h.prediction, h.ref, h.noise if h.judgment.verdict == "inconclusive" else None,
+                             self.untried(bp))
         else:
             observed = f"Speedup of {h.speedup:.2f}x (+/- {h.speedup * h.noise:.2f}x), standard error {sci(m.max_error)}, adversarial error {sci(m.adv_error)}."
             s = Metrics() if self.stopped else self.gpu_run({"target": "sweep", "params": h.params.dict(), "ks": SWEEP_KS}, f"{self.session}/{h.id}-sweep")
