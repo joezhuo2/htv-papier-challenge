@@ -18,9 +18,19 @@ The approximate GELU numbers are single same-window runs, not a 10 process stabi
 
 ## Why PyTorch eager fails the 1e-3 gate and the naive kernel passes
 
-The error metric is `max |y - ref| / max(|ref|, 1)` against an FP32 reference computed from the same FP16 inputs. One rounding of an O(1) output to FP16 costs up to half a unit in the last place, 2^-11, about 4.9e-4 relative, which is exactly the naive kernel's standard error (4.93e-4). The fused Triton kernel keeps the accumulator in FP32 through the bias add and the GELU and rounds to FP16 once, at the final store.
+The error metric is `max |y - ref| / max(|ref|, 1)` against an FP32 reference computed from the same FP16 inputs. One rounding of an O(1) output to FP16 costs up to half a unit in the last place, 2^-11, about 4.9e-4, which is exactly the naive kernel's standard error (4.93e-4). The fused Triton kernel keeps the accumulator in FP32 through the bias add and the GELU and rounds to FP16 once, at the final store, so it can never do better or worse than that one rounding.
 
-PyTorch eager runs `gelu(x @ w + b)` as three FP16 operations, and each writes an FP16 tensor: the matmul output is rounded, the bias add is rounded again, and the GELU output is rounded a third time. Three roundings give about 3 x 4.9e-4 = 1.5e-3, the measured eager standard error. On the adversarial batch (K = 16384 and 8x larger pre-activations) the FP16 intermediates sit higher in the exponent range and cuBLAS may reduce in reduced precision for FP16 GEMMs (PyTorch's default `allow_fp16_reduced_precision_reduction`), which brings it to 2.5e-3. So eager is a speed reference, not a correctness reference, and the README and UI say so.
+PyTorch eager runs `gelu(x @ w + b)` as three FP16 operations, and each writes an FP16 tensor. `uv run python -m harness.eager_error` (output in `runs/eager_error.json`) adds one rounding at a time and measures each step against the same reference:
+
+| Step | standard | large_k (K = 16384) | large_mag (8x pre-activations) |
+| --- | --- | --- | --- |
+| Everything in FP32, round once at the end (what the fused kernel does) | 4.9e-4 | 4.9e-4 | 4.9e-4 |
+| Matmul output rounded to FP16, bias and GELU in FP32 | 1.0e-3 | 2.3e-3 | 1.5e-3 |
+| Matmul output and bias add both rounded to FP16 | 1.5e-3 | 2.5e-3 | 2.0e-3 |
+| PyTorch eager (matmul, bias add and GELU in FP16) | 1.5e-3 | 2.5e-3 | 2.0e-3 |
+| Eager with `allow_fp16_reduced_precision_reduction = False` | 1.5e-3 | 1.5e-3 | 2.0e-3 |
+
+So the standard 1.5e-3 is two extra roundings before the GELU (the matmul output and the bias add each cost about one more half ulp), and the third rounding at the GELU output adds nothing measurable to the maximum. The adversarial 2.5e-3 is the large_k case (the adversarial error is the worse of large_k and large_mag): with K = 16384, cuBLAS reduces partial sums in reduced precision, PyTorch's default for FP16 GEMMs, and turning that off brings large_k back to 1.5e-3. So eager is a speed reference, not a correctness reference, and the README and UI say so.
 
 ## The designed failure (FP16 accumulation)
 
