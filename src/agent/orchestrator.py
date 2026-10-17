@@ -82,6 +82,13 @@ def params_text(p: Params):
     return f"{p.block_m}x{p.block_n}x{p.block_k} tiles, {p.warps} warps, {p.stages} stages, {p.acc} accumulation, {p.gelu} GELU"
 
 
+def claim_text(start: Params, p: Params, pred, bound):
+    """A claim built from the final parameters, used whenever the harness adjusted the proposed ones."""
+    vs = "naive" if pred["vs"] == "naive" else "the best configuration on this branch"
+    return (f"{change(start, p).capitalize()}, giving {params_text(p)}, is at least {pred['min_speedup']:.2f}x faster than {vs}, "
+            f"with standard max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound.")
+
+
 def change(a: Params, b: Params):
     diff = [f"{k} {getattr(a, k)} to {getattr(b, k)}" for k in a.dict() if getattr(a, k) != getattr(b, k)]
     return ", ".join(diff) or "no parameter change"
@@ -755,7 +762,11 @@ class Orchestrator:
                 h, why = None, "that configuration was already tried"
             if h:
                 cite = hint[1] if hint else f"Context from Papiers note {notes[0]['id']}" if notes else None
-                new = self.new_hyp(b, h["claim"], h["prediction"], h["params"], cite)
+                claim = h["claim"]
+                if h["adjusted"]:
+                    claim = claim_text(start, h["params"], h["prediction"], self.bounds(b.lens))
+                    cite = f"{cite}. {h['adjusted']}" if cite else h["adjusted"]
+                new = self.new_hyp(b, claim, h["prediction"], h["params"], cite)
                 if hint and first:
                     self.log.emit("plan_change", help=hint[2], text=f"My first reading of \"{hint[0][:120]}\" was not testable ({first}), so {new.id} tests "
                                                                     f"the closest valid version: {change(start, new.params)}.")

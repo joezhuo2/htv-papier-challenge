@@ -3,7 +3,7 @@
 import json
 import re
 
-from harness.kernel import ACC, GELU, SMEM_LIMIT, Params, smem_bytes
+from harness.kernel import ACC, GELU, SMEM_LIMIT, Params, fit_stages, smem_bytes
 
 SYSTEM = f"""You are a GPU kernel research agent tuning a fused Triton kernel computing gelu(x @ w + b) in FP16 on an RTX 5060 laptop GPU (Blackwell, 8 GB). Shape M = N = K = 2048.
 You may only edit these parameters:
@@ -74,10 +74,12 @@ def parse(text):
         params = Params(**h.get("params", {}))
     except (TypeError, ValueError) as e:
         return None, f"invalid params: {e}"
-    if smem_bytes(params) > SMEM_LIMIT:
-        return None, f"the config needs {smem_bytes(params)} bytes of shared memory, over the {SMEM_LIMIT} byte limit, use smaller tiles or fewer stages"
-    return {"claim": h["claim"], "explanation": h.get("explanation", ""), "prediction": {k: p[k] for k in ("min_speedup", "vs", "max_error")},
-            "params": params}, None
+    # over the shared memory limit, the largest stage count that fits is tested and the caller rewrites the claim from the final params
+    fitted = fit_stages(params)
+    adjusted = None if fitted == params else (f"Stages cut from {params.stages} to {fitted.stages}, the largest count that fits in shared memory "
+                                              f"({smem_bytes(params)} bytes needed, {smem_bytes(fitted)} of {SMEM_LIMIT} after the cut)")
+    return {"claim": re.sub(r"\bgelu\b", "GELU", h["claim"], flags=re.IGNORECASE), "explanation": h.get("explanation", ""),
+            "prediction": {k: p[k] for k in ("min_speedup", "vs", "max_error")}, "params": fitted, "adjusted": adjusted}, None
 
 
 BOUND_RE = re.compile(r"(\d+(?:\.\d+)?e-\d+|0\.0+\d+)", re.IGNORECASE)

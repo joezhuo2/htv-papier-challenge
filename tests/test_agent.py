@@ -826,9 +826,27 @@ def test_shared_memory_budget_is_checked_before_any_run():
     from harness.kernel import SMEM_LIMIT, Params, smem_bytes
     assert smem_bytes(Params(128, 256, 64, 8, 4)) == 147456 and smem_bytes(Params(256, 256, 64, 8, 4)) == 196608  # the two logged failures
     assert smem_bytes(Params(128, 128, 64, 4, 4)) == 98304 <= SMEM_LIMIT
-    h_, why = hyp.parse(h(P | {"block_n": 256, "block_k": 64, "warps": 8, "stages": 4}))
-    assert h_ is None and "147456 bytes" in why and "101376" in why
+    h_, _ = hyp.parse(h(P | {"block_n": 256, "block_k": 64, "warps": 8, "stages": 4}))
+    assert h_["params"].stages == 3 and h_["adjusted"].startswith("Stages cut from 4 to 3") and "147456 bytes needed, 98304 of 101376" in h_["adjusted"]
+    assert hyp.parse(h(P | {"block_m": 256, "block_n": 256, "block_k": 64, "stages": 5}))[0]["params"].stages == 2  # largest that fits, not just one less
+    assert hyp.parse(h(P))[0]["adjusted"] is None
     assert "101376 bytes" in hyp.SYSTEM
+
+
+def test_a_stage_cut_rewrites_the_claim_from_the_final_params(tmp_path):
+    big = P | {"block_m": 256, "block_k": 64, "warps": 8, "stages": 4}
+    fit = big | {"stages": 3}
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(big, 1.03, claim="Changing to 256x128x64 with 4 stages and 8 warps helps."), default="no json"),
+             engine=Engine(TABLE | {json.dumps(fit, sort_keys=True): met(0.55)}), main_iters=2)
+    o.run()
+    h1 = of(o, "hypothesis_proposed")[1]["hypothesis"]
+    assert h1["params"] == fit and "3 stages" in h1["claim"] and "4 stages" not in h1["claim"]
+    assert h1["claim"].startswith("Block_m 128 to 256, block_k 32 to 64, warps 4 to 8, giving 256x128x64 tiles, 8 warps, 3 stages")
+    assert "Stages cut from 4 to 3" in h1["note"]
+
+
+def test_model_claims_spell_gelu_in_capitals():
+    assert hyp.parse(h(P, claim="Switching to approximate GELu helps."))[0]["claim"] == "Switching to approximate GELU helps."
 
 
 def test_out_of_resources_post_mortem_is_templated_with_the_arithmetic():
