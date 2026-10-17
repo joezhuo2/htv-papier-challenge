@@ -132,8 +132,8 @@ def test_the_best_run_is_the_fastest_within_every_bound_whatever_its_verdict(tmp
     assert o.hyps[8].judgment.verdict == "inconclusive" and o.hyps[8].metrics.latency_ms < o.hyps[0].metrics.latency_ms
     o.finish()
     best = of(o, "session_finished")[0]["best"]
-    assert best == {"run": "r9", "hypothesis": "H8", "verdict": "inconclusive", "vs_naive": round(2.002463936805725 / 0.6976640224456787, 2),
-                    "vs_eager": round(0.6708959937095642 / 0.6976640224456787, 2)}
+    sp = o.hyps[8].metrics.speedups
+    assert best == {"run": "r9", "hypothesis": "H8", "verdict": "inconclusive", "vs_naive": round(sp["naive"], 2), "vs_eager": round(sp["eager"], 2)}
     report = of(o, "final_report")[0]["report"]["best"]
     assert (report["run"], report["hypothesis"], report["verdict"], report["vs_naive"]) == ("r9", "H8", "inconclusive", best["vs_naive"])
     # H1 is faster still, but breaks the Precision bound

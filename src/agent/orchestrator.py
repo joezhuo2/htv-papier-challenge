@@ -518,10 +518,12 @@ class Orchestrator:
                 self.summarize(h, self.branches[h.branch], "Session stopped before the next step." if self.stopped else "Session finished.")
         ledger = [{"hypothesis": h.id, "verdict": h.judgment.verdict, "history": h.history} for h in self.hyps if h.judgment]
         best = self.fastest()
+        # the same-window ratios the run's verdict card shows; the session baselines' latency over the run's, labelled, only without them
+        sp = best.metrics.speedups if best else {}
         lat = best.metrics.latency_ms if best else self.naive.latency_ms
-        # one metric for the best run everywhere: the baselines' latency over the fastest run within every bound, shown with its verdict
-        out = ({"run": best.run, "hypothesis": best.id, "verdict": best.judgment.verdict} if best else {"run": "naive"}) \
-            | {"vs_naive": round(self.naive.latency_ms / lat, 2), "vs_eager": round(self.eager.latency_ms / lat, 2)}
+        ratios = ({"vs_naive": round(sp["naive"], 2), "vs_eager": round(sp["eager"], 2)} if {"naive", "eager"} <= sp.keys() else
+                  {"vs_naive": round(self.naive.latency_ms / lat, 2), "vs_eager": round(self.eager.latency_ms / lat, 2), "cross_window": True})
+        out = ({"run": best.run, "hypothesis": best.id, "verdict": best.judgment.verdict} if best else {"run": "naive"}) | ratios
         if ledger:
             self.export([("ledger", f"Hypothesis ledger {self.hyps[0].id} to {self.hyps[-1].id}", "ledger.md",
                           ex.ledger_md(self.hyps, out if best else None, self.naive.latency_ms, self.eager.latency_ms))]
@@ -589,7 +591,7 @@ class Orchestrator:
                 hunches.append({"directive": hid, "lens": x["cmd"]["by"], "text": note,
                                 "outcome": f"{y.id} on {y.branch} ran {params_text(y.params)}: {self.outcome(y)}" if y else self.hunches.get(hid, "not run")})
         best_run = best and {"run": best.run, "hypothesis": best.id, "verdict": best.judgment.verdict, "branch": best.branch, "params": best.params.dict(),
-                             "latency_ms": best.metrics.latency_ms} | {k: out[k] for k in ("vs_naive", "vs_eager")}
+                             "latency_ms": best.metrics.latency_ms} | {k: out[k] for k in ("vs_naive", "vs_eager", "cross_window") if k in out}
         return {"best": best_run, "ruled_out": ruled, "next": nxt, "human": human, "hunches": hunches}
 
     def proceed_default(self):

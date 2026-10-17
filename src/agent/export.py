@@ -38,7 +38,8 @@ def ledger_md(hyps, best, naive_ms, eager_ms):
                     f"{' then '.join(h.history)} | {bound_text(h.bounds[-1]) if h.bounds else ''} | {h.note or ''} |")
     head = f"# Hypothesis ledger\n\nNaive {naive_ms:.3f} ms, PyTorch eager {eager_ms:.3f} ms."
     if best:
-        head += f" Best run {best['run']} ({best['verdict']}): {best['vs_naive']}x vs naive, {best['vs_eager']}x vs eager."
+        head += (f" Best run {best['run']} ({best['verdict']}): {best['vs_naive']}x vs naive, {best['vs_eager']}x vs eager"
+                 + (" (cross-window: the session baselines' latency over this run's)." if best.get("cross_window") else ", same-window."))
     return (head + "\n\n| id | branch | prediction | result | verdicts | final bound | note |\n|---|---|---|---|---|---|---|\n"
             + "\n".join(rows) + "\n")
 

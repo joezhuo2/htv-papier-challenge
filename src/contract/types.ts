@@ -158,11 +158,12 @@ export interface Report {
 }
 
 // the fastest run inside every active bound, whatever its verdict; older logs have only run and the ratios
-export interface SessionBest { run: string; hypothesis?: string; verdict?: Verdict; vs_naive: number; vs_eager: number }
+// vs_naive and vs_eager are the run's same-window ratios; cross_window marks the session baselines' latency over the run's instead
+export interface SessionBest { run: string; hypothesis?: string; verdict?: Verdict; vs_naive: number; vs_eager: number; cross_window?: boolean }
 
 // computed by the agent from the log at the end of a session, sent just before session_finished
 export interface FinalReport {
-  best: { run: string; hypothesis: string; verdict?: Verdict; branch: string; params: Params; latency_ms: number; vs_naive: number; vs_eager: number } | null
+  best: { run: string; hypothesis: string; verdict?: Verdict; branch: string; params: Params; latency_ms: number; vs_naive: number; vs_eager: number; cross_window?: boolean } | null
   ruled_out: string[]
   next: string[]
   human: string[] // decisions only a lens owner can make: unanswered requests, an unapproved hybrid, a lens conflict

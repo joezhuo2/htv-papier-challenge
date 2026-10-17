@@ -1551,7 +1551,7 @@ def test_the_best_run_is_ranked_by_latency_and_reported_with_the_same_metric(tmp
              engine=Windows(), main_iters=3)
     o.run()
     best = of(o, "session_finished")[0]["best"]
-    assert best == {"run": "r2", "hypothesis": "H1", "verdict": "confirmed", "vs_naive": round(1.891 / 0.628, 2), "vs_eager": round(0.669 / 0.628, 2)}
+    assert best == {"run": "r2", "hypothesis": "H1", "verdict": "confirmed", "vs_naive": 2.66, "vs_eager": round(0.669 / 0.628, 2)}  # the same-window ratios
     assert of(o, "final_report")[0]["report"]["best"]["run"] == "r2" and of(o, "final_report")[0]["report"]["best"]["vs_naive"] == best["vs_naive"]
 
 

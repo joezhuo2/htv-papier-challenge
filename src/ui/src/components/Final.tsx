@@ -25,7 +25,11 @@ export function ResultCard({ view }: { view: View }) {
               {' '}max error {run.metrics.max_error.toExponential(1)}, adversarial {run.metrics.adv_error.toExponential(1)}
             </p>
             {run.params ? <p className="mono small">{paramText(run.params)}</p> : null}
-            <p className="small muted">The fastest run inside every active bound, whatever its verdict; vs naive and vs eager are the session baselines' latency over this run's.</p>
+            <p className="small muted" data-testid="best-ratios">
+              The fastest run inside every active bound, whatever its verdict; {best.cross_window
+                ? "vs naive and vs eager are cross-window: the session baselines' latency over this run's."
+                : 'vs naive and vs eager were timed in the same window as this run, as on its verdict card.'}
+            </p>
             {view.verdicts[run.hypothesis] ? <p className="small">Judged against {boundText(view.verdicts[run.hypothesis].bound)}.</p> : null}
           </>
         ) : <p className="empty">No run stayed inside every bound in this session.</p>}
