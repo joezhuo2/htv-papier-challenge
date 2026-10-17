@@ -53,18 +53,19 @@ def asker(debug, roles=None):
         live = [x for x in chain if down.get(x[0], 0) <= time.monotonic()] or chain[-1:]
         last = None
         for provider, model in live:
+            t = time.monotonic()
             try:
                 final = (provider, model) == chain[-1]
                 client = clients.setdefault((provider, role), Client(timeout=TIMEOUTS[role], max_retries=1 if final else 0, provider=provider))
-                text = client.complete(messages, model=model, tag=tag, max_tokens=2048)["text"]
-                if last:
-                    note(f"{role}: {type(last).__name__} on an earlier route, answered by {model} on {provider}")
-                return text
+                out = client.complete(messages, model=model, tag=tag, max_tokens=2048)
+                note(f"{role}: {model} on {provider} answered in {time.monotonic() - t:.1f} s" + (" (cache)" if out.get("cached") else "")
+                     + (f" after {type(last).__name__} on an earlier route" if last else ""))
+                return out["text"]
             except Exception as e:  # noqa: BLE001, try the next provider, the last failure propagates
                 last = e
                 fatal = type(e).__name__ in FATAL
                 down[provider] = float("inf") if fatal else time.monotonic() + DOWN_S
-                note(f"{role}: {model} on {provider} failed ({type(e).__name__}: {str(e)[:160]}), "
+                note(f"{role}: {model} on {provider} failed after {time.monotonic() - t:.1f} s ({type(e).__name__}: {str(e)[:160]}), "
                      + ("dropped for the session" if fatal else f"skipped for {DOWN_S:.0f} s"))
         raise last
 

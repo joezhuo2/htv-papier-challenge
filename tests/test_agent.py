@@ -661,7 +661,8 @@ def test_gemini_first_then_nim_fallback_is_logged(tmp_path, monkeypatch):
     assert ask([], "fast", "t") == "from n-fast"
     assert ask([], "fast", "t") == "from n-fast"
     text = debug.read_text()
-    assert "g-fast on gemini failed (TimeoutError: gemini slow), skipped for 300 s" in text and "answered by n-fast on nim" in text
+    assert "g-fast on gemini failed after 0.0 s (TimeoutError: gemini slow), skipped for 300 s" in text
+    assert "n-fast on nim answered in 0.0 s after TimeoutError on an earlier route" in text
     assert text.count("g-fast on gemini failed") == 1  # the second call skips the failed route
 
 
