@@ -7,7 +7,8 @@ Commands for every task, run from the repo root unless noted. All shell commands
 - Node: the system Node is v18, which is too old for vitest and the Papiers CLI. Node 22 is installed through nvm: run `nvm use 22`, or put `~/.nvm/versions/node/v22.23.3/bin` first on PATH. Never install globally for the UI, everything is in `src/ui/node_modules`.
 - Python: managed by uv (`uv sync`, `uv run ...`). `uv` lives in `~/.local/bin`.
 - `.env` (gitignored, never commit or print it): `NVIDIA_API_KEY`, `GEMINI_API_KEY`. `PAPIERS_TOKEN` is set in the shell profile for the Papiers CLI.
-- Optional overrides: `GEMINI_FAST_MODEL`, `GEMINI_STRONG_MODEL`, `FAST_MODEL`, `STRONG_MODEL`, `LLM_TIMEOUT_S`.
+- Optional overrides: `OMNIROUTE` (0 disables it), `OMNIROUTE_URL` (http://localhost:20128/v1), `OMNIROUTE_MODEL` (auto/coding), `OMNIROUTE_API_KEY` (only if the gateway has REQUIRE_API_KEY), `GEMINI_FAST_MODEL`, `GEMINI_STRONG_MODEL`, `FAST_MODEL`, `STRONG_MODEL`, `LLM_TIMEOUT_S`.
+- Provider order for both roles: OmniRoute, then Gemini, then NIM. OmniRoute is installed on Windows through npm (`omniroute`) and must be running; with mirrored WSL networking `localhost:20128` reaches it.
 
 ## The UI
 

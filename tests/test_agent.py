@@ -630,10 +630,13 @@ def test_gemini_first_then_nim_fallback_is_logged(tmp_path, monkeypatch):
     assert "g-fast failed (TimeoutError), answered by n-fast on nim." in log.events[-1]["text"]
 
 
-def test_provider_chain_prefers_gemini_only_when_its_key_is_set(monkeypatch):
+def test_provider_chain_tries_omniroute_then_gemini_when_its_key_is_set_then_nim(monkeypatch):
     from agent import session
+    monkeypatch.delenv("OMNIROUTE", raising=False)
     monkeypatch.setenv("GEMINI_API_KEY", "x")
-    assert [p for p, _ in session.chains()["fast"]] == ["gemini", "nim"]
+    assert session.chains()["fast"][0] == ("omniroute", "auto/coding")
+    assert [p for p, _ in session.chains()["fast"]] == ["omniroute", "gemini", "nim"]
+    monkeypatch.setenv("OMNIROUTE", "0")
     monkeypatch.delenv("GEMINI_API_KEY")
     assert [p for p, _ in session.chains()["strong"]] == ["nim"]
 

@@ -18,7 +18,11 @@ STRONG_MODEL = os.environ.get("STRONG_MODEL", "google/gemma-4-31b-it")
 # Gemini is the default provider when GEMINI_API_KEY is set, NIM (the models above) is the fallback
 GEMINI_FAST_MODEL = os.environ.get("GEMINI_FAST_MODEL", "gemini-3.5-flash-lite")
 GEMINI_STRONG_MODEL = os.environ.get("GEMINI_STRONG_MODEL", "gemini-3.8-flash")
-PROVIDERS = {"nim": (BASE_URL, "NVIDIA_API_KEY"), "gemini": (GEMINI_URL, "GEMINI_API_KEY")}
+# OmniRoute is a local OpenAI compatible gateway that routes an intent alias such as auto/coding to a configured provider.
+# It is the first choice for both roles unless OMNIROUTE=0, Gemini and then NIM are the fallbacks.
+OMNIROUTE_URL = os.environ.get("OMNIROUTE_URL", "http://localhost:20128/v1")
+OMNIROUTE_MODEL = os.environ.get("OMNIROUTE_MODEL", "auto/coding")
+PROVIDERS = {"nim": (BASE_URL, "NVIDIA_API_KEY"), "gemini": (GEMINI_URL, "GEMINI_API_KEY"), "omniroute": (OMNIROUTE_URL, "OMNIROUTE_API_KEY")}
 
 # Per-model request extras. Nemotron reasons by default and spends the whole budget on reasoning_content.
 EXTRA = {
@@ -31,13 +35,17 @@ EXTRA = {
 
 
 def available(provider):
+    if provider == "omniroute":
+        return os.environ.get("OMNIROUTE") != "0"
     return bool(os.environ.get(PROVIDERS[provider][1]))
 
 
 class Client:
     def __init__(self, timeout=120, max_retries=2, cache=True, provider="nim"):
         url, key = PROVIDERS[provider]
-        self.api = OpenAI(base_url=url, api_key=os.environ[key], timeout=timeout, max_retries=max_retries)
+        # a local OmniRoute does not check the key unless REQUIRE_API_KEY is set on it
+        self.api = OpenAI(base_url=url, api_key=os.environ.get(key, "unused") if provider == "omniroute" else os.environ[key], timeout=timeout,
+                          max_retries=max_retries)
         self.cache = cache
 
     def complete(self, messages, model=FAST_MODEL, temperature=0.6, max_tokens=1024, tag=""):

@@ -9,6 +9,7 @@ from agent.llm import (
     FAST_MODEL,
     GEMINI_FAST_MODEL,
     GEMINI_STRONG_MODEL,
+    OMNIROUTE_MODEL,
     STRONG_MODEL,
     Client,
     available,
@@ -20,11 +21,12 @@ LLM_TIMEOUT_S = float(os.environ.get("LLM_TIMEOUT_S", "180"))
 
 
 def chains():
-    """Role to [(provider, model)] in order of preference: Gemini first when its key is set, NIM as the fallback."""
+    """Role to [(provider, model)] in order of preference: OmniRoute (unless OMNIROUTE=0), then Gemini when its key is set, then NIM."""
+    omni = [("omniroute", OMNIROUTE_MODEL)] if available("omniroute") else []
     gem = available("gemini")
     return {
-        "fast": ([("gemini", GEMINI_FAST_MODEL)] if gem else []) + [("nim", FAST_MODEL)],
-        "strong": ([("gemini", GEMINI_STRONG_MODEL)] if gem else []) + [("nim", STRONG_MODEL)],
+        "fast": omni + ([("gemini", GEMINI_FAST_MODEL)] if gem else []) + [("nim", FAST_MODEL)],
+        "strong": omni + ([("gemini", GEMINI_STRONG_MODEL)] if gem else []) + [("nim", STRONG_MODEL)],
     }
 
 

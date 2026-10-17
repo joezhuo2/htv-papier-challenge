@@ -50,6 +50,16 @@ def check_gemini():
     return r.status_code == 200, f"{GEMINI_URL}models answered {r.status_code}"
 
 
+def check_omniroute():
+    from agent.llm import OMNIROUTE_MODEL, OMNIROUTE_URL, available
+    if not available("omniroute"):
+        return False, "disabled with OMNIROUTE=0, Gemini and NIM are used"
+    r = httpx.get(f"{OMNIROUTE_URL}/models", headers={"Authorization": f"Bearer {os.environ.get('OMNIROUTE_API_KEY', 'unused')}"}, timeout=5)
+    ids = [m["id"] for m in r.json().get("data", [])] if r.status_code == 200 else []
+    listed = "is listed" if OMNIROUTE_MODEL in ids else f"is not among its {len(ids)} models"
+    return r.status_code == 200 and OMNIROUTE_MODEL in ids, f"{OMNIROUTE_URL}/models answered {r.status_code}, {OMNIROUTE_MODEL} {listed}"
+
+
 def check_papiers():
     from agent import papiers
     exe = papiers.binary()
@@ -59,7 +69,7 @@ def check_papiers():
     return True, "search answered"
 
 
-CHECKS = {"gpu": check_gpu, "gemini": check_gemini, "nim": check_nim, "papiers": check_papiers}
+CHECKS = {"gpu": check_gpu, "omniroute": check_omniroute, "gemini": check_gemini, "nim": check_nim, "papiers": check_papiers}
 
 
 def run_check(fn):
