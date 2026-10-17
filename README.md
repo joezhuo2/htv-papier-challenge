@@ -8,7 +8,7 @@ A solo build for Hack the Valley 11, entered in the Papiers Autoresearch Challen
 
 ## Try the replay
 
-No GPU, no network and no `.env` needed, only Node 22 or newer (`npm ci` downloads the UI dependencies once). From the repo root:
+No GPU and no `.env` needed, only Node 22 or newer. `npm ci` needs the network once to download the UI dependencies; after that the build and the replay run fully offline. From the repo root:
 
 ```bash
 cd src/ui && npm ci && npm run build:judging && npx vite preview
