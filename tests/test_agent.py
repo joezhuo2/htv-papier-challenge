@@ -244,8 +244,8 @@ def test_failure_path_fp16_provisional_under_speed_then_rejected_by_precision(tm
     assert "on the standard and adversarial batches" in of(o, "conflict_detected")[0]["reason"]
     assert [e["bound"]["set_by"] for e in of(o, "verdict") if e["hypothesis"] == "H0"] == ["default", "precision"]  # every run is re-judged
     assert types(o).index("branch_created", types(o).index("directive_added", types(o).index("directive_added") + 1)) < types(o).index("conflict_detected")
-    pm = of(o, "post_mortem")[0]["post_mortem"]
-    assert pm["hypothesis"] == "H1" and [s["k"] for s in pm["sweep"]] == [256, 512, 1024, 2048, 4096]
+    pm = next(e["post_mortem"] for e in of(o, "post_mortem") if e["post_mortem"]["hypothesis"] == "H1")
+    assert [s["k"] for s in pm["sweep"]] == [256, 512, 1024, 2048, 4096]
     assert "Drop FP16 accumulation" in pm["pivot"]
     assert ("speed", "rejected") in [(e["branch"], e["status"]) for e in of(o, "branch_status")]
     pivot_prompt = next(m for model, tag, m in o.ask.calls if tag.startswith("speed2-"))
@@ -379,8 +379,13 @@ def test_speedup_miss_is_not_a_branch_failure(tmp_path):
     assert ev[v1]["verdict"] == "rejected" and ev[v1]["checks"][0]["pass"] is False
     nxt = next(i for i, e in enumerate(ev) if i > v1 and e["type"] == "hypothesis_proposed")
     between = [e["type"] for e in ev[v1:nxt]]
-    assert "post_mortem" not in between and "branch_created" not in between
+    assert "branch_created" not in between and ("speed", "rejected") not in [(e["branch"], e["status"]) for e in of(o, "branch_status")]
     assert ev[nxt]["hypothesis"]["branch"] == "speed"
+    pm = next(e["post_mortem"] for e in ev[v1:nxt] if e["type"] == "post_mortem")
+    assert pm["hypothesis"] == "H2" and pm["sweep"] == [] and pm["observed"].startswith("1.00x vs the parent")
+    assert pm["cause"].startswith("It ran at 1.00x vs its parent, faster but short of the predicted 1.50x") and "Changed stages 3 to 4" in pm["cause"]
+    assert "a deeper pipeline holds more shared memory per block" in pm["cause"] and pm["pivot"].startswith("Revert stages 3 to 4")
+    assert any(i["file"] == "exports/H2-negative-result.md" for e in of(o, "findings_exported") for i in e["items"])
 
 
 # ---- Papiers ----
@@ -1241,7 +1246,7 @@ def test_keep_tuning_guarantees_its_iterations_past_two_misses(tmp_path):
     o.iterate(b)
     assert o.hyps[-1].judgment.verdict == "rejected" and b.misses == 2
     assert b.status == "running" and o.promised("speed2") == 1
-    assert of(o, "summary")[-1]["summary"]["next_step"] == "Try a different change on this branch."
+    assert of(o, "summary")[-1]["summary"]["next_step"] == f"Try a different change on this branch, avoiding what the {o.hyps[-1].id} post-mortem ruled out."
 
 
 # ---- fixes from the 17:07 recording ----
@@ -1386,3 +1391,21 @@ def test_a_rejected_config_with_one_more_harmful_knob_is_refused(tmp_path):
     x.judgment = j(x.prediction, x.metrics, 0.97, BAND, 1e-3, None)
     why = o.vet(Params(**P | {"block_k": 64}), Params(**P | {"warps": 8, "stages": 4}), "Cites H1 and H2.")
     assert why == "it is the rejected H1 with only warps 4 to 8, a change H2 already showed hurts (rejected, 0.97x vs its parent)"
+
+
+def test_every_rejection_gets_a_post_mortem_with_registers_spills_and_the_param_diff(tmp_path):
+    from agent.orchestrator import miss_cause
+    from harness.kernel import Params
+    base, parent = Params(**P), Metrics.from_dict(met(0.642).dict() | {"n_regs": 168, "n_spills": 0})
+    spill = miss_cause(Params(**P | {"block_n": 256, "warps": 8}), base, Metrics.from_dict(met(0.9).dict() | {"n_regs": 255, "n_spills": 40}),
+                       parent, 0.71, {"min_speedup": 1.1}, "parent")
+    assert spill["cause"] == ("It ran at 0.71x vs its parent, slower than what it was timed against. Changed block_n 128 to 256, warps 4 to 8 "
+                              "(168 to 255 registers and 0 to 40 spilled words per thread). Likely cause: it spills 40 words per thread to local memory, "
+                              "so the inner loop waits on memory.")
+    regs = miss_cause(Params(**P | {"block_k": 64}), base, Metrics.from_dict(met(0.7).dict() | {"n_regs": 232, "n_spills": 0}), parent, 0.92,
+                      {"min_speedup": 1.1}, "parent")
+    assert "registers per thread rose from 168 to 232, so fewer warps fit on each SM" in regs["cause"] and regs["pivot"].startswith("Revert block_k 32 to 64")
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"warps": 8}, 1.02), default="no json"), main_iters=1, branch_iters=2, help_deadline_s=0.5)
+    drive(o, [(judged(o, 1), SPEED), (asked(o), {"type": "add_directive", "lens": "precision", "text": "Max error under 1e-3 on both batches."})])
+    rejected = {e["hypothesis"] for e in of(o, "verdict") if e["verdict"] == "rejected"}
+    assert rejected and rejected <= {e["post_mortem"]["hypothesis"] for e in of(o, "post_mortem")}

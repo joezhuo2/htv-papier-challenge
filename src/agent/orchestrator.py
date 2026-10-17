@@ -171,6 +171,45 @@ def register_cause(p: Params, m: Metrics, speedup, parent: Metrics | None):
     return {"cause": cause, "pivot": f"Keep the accumulator at or under {ACC_LIMIT[p.acc]} elements per thread: a smaller output tile or more warps."}
 
 
+KNOB_EFFECT = {
+    ("stages", 1): "a deeper pipeline holds more shared memory per block, so fewer blocks fit on each SM, without hiding more load latency here",
+    ("stages", -1): "a shallower pipeline leaves less load latency hidden behind the math",
+    ("warps", 1): "more warps split the same tile thinner, so each thread does less math per load",
+    ("warps", -1): "fewer warps leave less parallelism to hide memory latency",
+    ("block_k", 1): "a longer K step loads more per iteration and raises shared memory per stage",
+    ("block_k", -1): "a shorter K step means more loop iterations and more synchronization per output tile",
+    ("block_m", 1): "a taller output tile raises registers and shared memory per block", ("block_m", -1): "a shorter output tile reuses each loaded column less",
+    ("block_n", 1): "a wider output tile raises registers and shared memory per block", ("block_n", -1): "a narrower output tile reuses each loaded row less",
+}
+
+
+def miss_cause(p: Params, base: Params, m: Metrics, parent: Metrics, speedup, pred, ref):
+    """Templated post-mortem for a speed miss: the likely cause from registers, spills and the parameter diff."""
+    vs = "naive" if ref == "naive" else "its parent"
+    regs = (f"{parent.n_regs} to {m.n_regs} registers and {parent.n_spills} to {m.n_spills} spilled words per thread"
+            if m.n_regs is not None and parent.n_regs is not None else
+            f"{m.n_regs} registers and {m.n_spills} spilled words per thread" if m.n_regs is not None else "no register count recorded")
+    per, limit = acc_per_thread(p), ACC_LIMIT[p.acc]
+    knobs = [k for k in TILE if getattr(p, k) != getattr(base, k)]
+    if m.n_spills and m.n_spills > (parent.n_spills or 0):
+        why = f"it spills {m.n_spills} words per thread to local memory, so the inner loop waits on memory"
+        pivot = f"Keep the accumulator at or under {limit} elements per thread ({per} now): a smaller output tile or more warps."
+    elif per > limit:
+        why = f"{per} {p.acc.upper()} accumulator elements per thread is over the {limit} that fit in registers"
+        pivot = f"Keep the accumulator at or under {limit} elements per thread: a smaller output tile or more warps."
+    elif m.n_regs and parent.n_regs and m.n_regs > 1.15 * parent.n_regs:
+        why = f"registers per thread rose from {parent.n_regs} to {m.n_regs}, so fewer warps fit on each SM"
+        pivot = f"Revert {change(base, p)} and try a change that does not add registers."
+    else:
+        effects = [KNOB_EFFECT[(k, 1 if getattr(p, k) > getattr(base, k) else -1)] for k in knobs]
+        why = (f"registers and spills barely moved, so the change itself is the likely cause: {'; '.join(effects)}" if effects
+               else f"registers and spills barely moved, so {change(base, p)} itself is the likely cause")
+        pivot = f"Revert {change(base, p)} and change a knob the ledger has not tried yet."
+    gain = (f"It ran at {speedup:.2f}x vs {vs}, faster but short of the predicted {pred['min_speedup']:.2f}x, so the change helps less than claimed"
+            if speedup >= 1 else f"It ran at {speedup:.2f}x vs {vs}, slower than what it was timed against")
+    return {"cause": f"{gain}. Changed {change(base, p)} ({regs}). Likely cause: {why}.", "pivot": pivot}
+
+
 def assess(h):
     """(confidence, confidence_reason, uncertainties, would_change_mind) from the verdict, its checks and the run's measured spread."""
     m, j = h.metrics, h.judgment
@@ -206,6 +245,11 @@ def assess(h):
     level = "high" if -margin > 2 * h.noise else "medium"
     return (level, f"{h.speedup:.2f}x vs {vs} misses the {target:.2f}x threshold by {-margin * 100:.1f}%, outside {band}.",
             unsure, f"A same-window rerun at or above {target * (1 + h.noise):.2f}x vs {vs}.")
+
+
+def errs(h):
+    """The error checks this hypothesis failed under its latest verdict."""
+    return [c for c in h.judgment.checks if c.passed is False and "error" in c.name]
 
 
 class Stopped(Exception):
@@ -582,6 +626,8 @@ class Orchestrator:
                 self.summarize(h, self.branches[h.branch], f"Fork: keep what worked in {h.id} and drop {ruled_out(h.params, self.start_point(h.branch)[0])}.")
                 self.export_failure(h, self.branches[h.branch])
                 flipped.append(h)
+            elif new.verdict == "rejected" and j.verdict != "rejected":
+                self.post_mortem(h)
         if flipped:
             self.refresh_helps(flipped)
         self.maybe_hybrid()
@@ -675,8 +721,7 @@ class Orchestrator:
             self.export_failure(h, b)
             self.pivot(h)
             return
-        slow = h.ref == "parent" and h.speedup is not None and h.speedup < SLOW
-        if unsafe or slow:
+        if v == "rejected" and h.id not in self.pms:
             self.post_mortem(h)
 
         b.misses = 0 if v == "confirmed" else b.misses + 1
@@ -701,7 +746,7 @@ class Orchestrator:
         if b.id == "merge":
             nxt = "Keep the hybrid, the lenses' changes add up." if v == "confirmed" else "Keep the faster parent, the hybrid did not beat it."
         self.summarize(h, b, nxt)
-        if unsafe or slow:
+        if v == "rejected":
             self.export_failure(h, b)
         if b.id == "merge" and v == "confirmed":
             for pid in b.parents:
@@ -1272,13 +1317,20 @@ class Orchestrator:
             found = self.papiers("tile size shared memory" if "shared memory" in (m.error or "") else facet(base, h.params))
             pm = {"hypothesis": h.id, "expected": expected, "observed": f"The run failed: {(m.error or 'no measurement').strip().splitlines()[-1][:200]}",
                   "sweep": []} | failure_cause(h.params, m)
-        elif h.ref == "parent" and h.speedup < SLOW and m.max_error < h.prediction["max_error"]:
+        elif h.ref == "parent" and h.speedup < SLOW and not errs(h):
             pp = h.base or self.best_run(h.branch).params
             parent = next((x.metrics for x in self.hyps if x.params == pp and x.metrics and x.metrics.latency_ms), None)
             found = self.papiers("register pressure spills")
             pm = {"hypothesis": h.id, "expected": expected, "sweep": [],
                   "observed": f"{m.latency_ms:.3f} ms against {m.ref_ms['parent']:.3f} ms for the parent in the same window, {h.speedup:.2f}x (+/- {h.speedup * h.noise:.2f}x)."} \
                 | register_cause(h.params, m, h.speedup, parent)
+        elif not errs(h):
+            bp, bm = self.baseline(h)
+            found = self.papiers("register pressure spills" if m.n_spills else facet(bp, h.params))
+            vs = "naive" if h.ref == "naive" else "the parent"
+            pm = {"hypothesis": h.id, "expected": expected, "sweep": [],
+                  "observed": f"{h.speedup:.2f}x vs {vs} (+/- {h.speedup * h.noise:.2f}x) at {m.latency_ms:.3f} ms, standard error {sci(m.max_error)}."} \
+                | miss_cause(h.params, bp, m, bm, h.speedup, h.prediction, h.ref)
         else:
             observed = f"Speedup of {h.speedup:.2f}x (+/- {h.speedup * h.noise:.2f}x), standard error {sci(m.max_error)}, adversarial error {sci(m.adv_error)}."
             s = Metrics() if self.stopped else self.gpu_run({"target": "sweep", "params": h.params.dict(), "ks": SWEEP_KS}, f"{self.session}/{h.id}-sweep")
