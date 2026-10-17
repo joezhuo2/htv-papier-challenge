@@ -3,6 +3,7 @@ import type { FeedItem, View } from '../state/reducer'
 import { clock, ledgerRows, ms, predictionText, runFor, sci, times } from '../state/derive'
 import { useSize } from '../useSize'
 import { MockTag, VerdictChip } from './Glyph'
+import { NoteChip } from './PapiersPanel'
 
 const bestParams = (v: View, branch: string) => {
   const runs = v.runs.filter(r => r.branch === branch && r.metrics && v.verdicts[r.hypothesis]?.verdict === 'confirmed')
@@ -88,7 +89,7 @@ export function Ledger({ view }: { view: View }) {
               </div>
               <div className="small">Predicted {r.prediction}</div>
               <div className="small muted">{r.result ? `Measured ${r.result}` : 'Not run'}</div>
-              {r.note ? <div className="small muted">Informed by Papiers <span className="mono">{r.note}</span></div> : null}
+              {r.note ? <div className="small muted">Informed by <NoteChip view={view} id={r.note} /></div> : null}
             </li>
           ))}
         </ol>

@@ -1,7 +1,7 @@
 import type { Lens } from '@contract/types'
 import { lensName } from '../state/derive'
 
-export function LensTabs({ lens, waiting, onChange }: { lens: Lens; waiting: Lens[]; onChange: (l: Lens) => void }) {
+export function LensTabs({ lens, waiting, onChange, check }: { lens: Lens; waiting: Lens[]; onChange: (l: Lens) => void; check?: boolean }) {
   return (
     <div className="tabs" role="tablist" aria-label="lens">
       {(['speed', 'precision'] as Lens[]).map((l, i) => (
@@ -11,6 +11,7 @@ export function LensTabs({ lens, waiting, onChange }: { lens: Lens; waiting: Len
         >
           {lensName(l)}
           {waiting.includes(l) ? <span className="badge" aria-label="help request waiting">help</span> : null}
+          {check && l === 'precision' ? <span className="badge" aria-label="provisional result waiting for a Precision check">check</span> : null}
         </button>
       ))}
     </div>

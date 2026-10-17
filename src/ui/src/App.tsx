@@ -16,7 +16,7 @@ import { PostMortemCard } from './components/PostMortem'
 import { Banner } from './components/Banner'
 import { PapiersPanel } from './components/PapiersPanel'
 import { Ledger, ReportView } from './components/Tier2'
-import { clock, latestRun } from './state/derive'
+import { clock, latestRun, runFor, sci } from './state/derive'
 
 const typing = (el: EventTarget | null) => el instanceof HTMLElement && el.closest('input, textarea, select, [contenteditable]') !== null
 
@@ -78,12 +78,14 @@ export function App({ source }: { source: Source }) {
     const blob = new Blob([s.events.map(e => JSON.stringify(e)).join('\n') + '\n'], { type: 'application/x-ndjson' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `war-room-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.jsonl`
+    a.download = `war-room-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}${view.finished ? '' : '-partial'}.jsonl`
     a.click()
     URL.revokeObjectURL(a.href)
   }
 
   const waiting = view.finished ? [] : [...new Set(view.helps.filter(h => !h.answer).map(h => h.help.target))]
+  // a result that passes only under the Speed tolerance: the moment to send the Precision directive
+  const provisional = view.finished ? [] : view.hypotheses.filter(h => view.verdicts[h.id]?.verdict === 'confirmed' && view.verdicts[h.id]?.provisional)
   const mine = view.helps.filter(h => h.help.target === view.lens)
   const open = mine.filter(h => !h.answer && !view.finished)
   const answered = mine.filter(h => h.answer || view.finished)
@@ -103,7 +105,19 @@ export function App({ source }: { source: Source }) {
       <Banner error={s.error} status={s.status} onRetry={s.retry} />
       <main className="main">
         <aside className="col left" aria-label="steering">
-          <LensTabs lens={view.lens} waiting={waiting} onChange={setLens} />
+          <LensTabs lens={view.lens} waiting={waiting} onChange={setLens} check={provisional.length > 0} />
+          {provisional.map(h => {
+            const m = runFor(view, h.id)?.metrics
+            return (
+              <article key={h.id} className="card focus" role="status" data-testid="provisional-cue">
+                <p className="small">
+                  <span className="strong mono">{h.id}</span> passed provisionally under the Speed tolerance
+                  {m ? `: standard error ${sci(m.max_error)}, adversarial ${sci(m.adv_error)} not gated yet` : ''}. Send a Precision directive to judge it against 1e-3 on both batches.
+                </p>
+                {view.lens === 'speed' ? <button onClick={() => setLens('precision')}>Switch to the Precision lens</button> : null}
+              </article>
+            )
+          })}
           {open.map(h => <HelpCard key={h.help.id} view={view} hv={h} now={s.now} sent={s.sent} onSend={s.send} />)}
           <DirectivePanel view={view} sent={s.sent} onSend={s.send} onSelectBranch={selectBranch} />
           {answered.map(h => <HelpCard key={h.help.id} view={view} hv={h} now={s.now} sent={s.sent} onSend={s.send} />)}

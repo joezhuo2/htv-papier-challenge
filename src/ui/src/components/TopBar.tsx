@@ -80,7 +80,9 @@ export function TopBar(p: Props) {
         </div>
       ) : (
         <div className="controls" role="group" aria-label="live controls">
-          <button onClick={p.onSave} title="Download the events received so far as a JSONL replay">save as replay</button>
+          <button onClick={p.onSave} title={p.live?.finished ? 'Download the whole session as a JSONL replay' : 'The session has not finished: this saves only the events so far, without session_finished'}>
+            {p.live?.finished ? 'save as replay' : 'save partial replay'}
+          </button>
           <button onClick={p.onStop} disabled={!p.live?.started || p.live.finished || p.live.stopping} title="Finish the session with what is logged so far">
             {p.live?.stopping && !p.live.finished ? 'stopping...' : 'stop'}
           </button>

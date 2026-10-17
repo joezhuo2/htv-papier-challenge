@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FeedItem, View } from '../state/reducer'
 import { boundText, clock, hypothesisOf, lensName, ms, parentBest, predictionText, runOf, sci, times, windowText } from '../state/derive'
 import { Def, MockTag, VerdictChip } from './Glyph'
-import { InformedBy } from './PapiersPanel'
+import { InformedBy, NoteChip, NoteText } from './PapiersPanel'
 import type { Command } from '@contract/types'
 import { HybridCard } from './Tier2'
 
@@ -67,7 +67,7 @@ function SummaryCard({ view, item, onSelectRun, onPostMortem, collapsed, onToggl
 
         <MockTag on={item.mock} />
       </div>
-      <p>{summary.tried}</p>
+      <p><NoteText view={view} text={summary.tried} /></p>
       {h ? <InformedBy view={view} h={h} /> : null}
       <dl>
         {h ? <><dt>Predicted</dt><dd>{predictionText(view, h)}</dd></> : null}
@@ -191,7 +191,7 @@ export function SummaryFeed(p: Props) {
             return (
               <p key={i} className="line" title={f.note?.excerpt}>
                 <span className="mono">{clock(f.t)}</span>{' '}
-                {f.note ? <><span className="strong">Read Papiers {f.note.id}:</span> {f.note.title}</> : <><span className="strong">Searched Papiers:</span> no matching notes for "{f.query}"</>}
+                {f.note ? <><span className="strong">Read Papiers:</span> <NoteChip view={view} id={f.note.id} /></> : <><span className="strong">Searched Papiers:</span> no matching notes for "{f.query ?? 'this topic'}"</>}
               </p>
             )
           case 'branch':

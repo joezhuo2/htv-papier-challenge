@@ -18,6 +18,23 @@ export function showNote(id: string) {
   el.classList.add('flash')
 }
 
+const NOTE_ID = /\b((?:cnv|hl|nte|psg)_[0-9a-zA-Z]{4,})\b/
+
+export function NoteChip({ view, id }: { view: View; id: string }) {
+  const found = view.notes.find(n => n.id === id)
+  return (
+    <button type="button" className="tag note-chip" onClick={() => showNote(id)} title={id} data-testid="note-chip">
+      Papiers note{found ? `: ${cleanNote(found).title}` : ''}
+    </button>
+  )
+}
+
+// text with raw Papiers ids replaced by note chips, so no cnv_ id is shown as prose
+export function NoteText({ view, text }: { view: View; text: string }) {
+  const parts = text.split(NOTE_ID)
+  return <>{parts.map((p, i) => (i % 2 ? <NoteChip key={i} view={view} id={p} /> : p.replace(/\s*Context from Papiers note\s*$/, '')))}</>
+}
+
 export function CopyId({ id }: { id: string }) {
   const [copied, setCopied] = useState(false)
   const copy = () => navigator.clipboard?.writeText(id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) })
@@ -35,8 +52,8 @@ export function InformedBy({ view, h }: { view: View; h: HypothesisView }) {
   const note = found && cleanNote(found)
   return (
     <button className="informed" onClick={() => showNote(id)} data-testid="informed-by" title={note?.excerpt}>
-      <span className="strong">Informed by note <span className="mono">{id}</span></span>
-      {note ? <span className="oneline muted">{note.excerpt}</span> : null}
+      <span className="strong">Informed by Papiers note</span>
+      {note ? <span className="oneline muted">{note.title}</span> : null}
     </button>
   )
 }

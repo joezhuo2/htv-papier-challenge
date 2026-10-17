@@ -50,6 +50,16 @@ describe('Papiers reads in the event log', () => {
     expect(within(read).getByTestId('copy-id').textContent).toBe(`${id} copied`)
   })
 
+  it('raw Papiers ids in summary text render as note chips', () => {
+    const id = 'cnv_6630997cd59e09a4331ad143fa6088c4'
+    const summary = { ...(demoScript.find(e => e.type === 'summary') as Extract<DemoEvent, { type: 'summary' }>).summary, branch: 'main', tried: `Bigger tiles. Context from Papiers note ${id}` }
+    const v = fold([start, { t: 3000, type: 'papiers_context', query: 'q', note: { id, title: 'Conversation overview', excerpt: 'Summarize this article Agent: ## Summary The article is a Triton tutorial on tiling.' } }, { t: 4000, type: 'summary', summary }])
+    render(<SummaryFeed view={v} onSelectRun={() => {}} onPostMortem={() => {}} onReport={() => {}} onSend={() => {}} onHybrid={() => {}} />)
+    const feed = screen.getByLabelText('summary feed')
+    expect(feed.textContent).not.toContain(id)
+    expect(within(feed).getAllByTestId('note-chip')[0].textContent).toBe('Papiers note: Triton tutorial on tiling')
+  })
+
   it('shows no matching notes for an empty search, in the panel and the feed', () => {
     const v = fold([start, { t: 3200, type: 'papiers_context', query: 'accumulation numerical error' }])
     render(<><PapiersPanel view={v} /><SummaryFeed view={v} onSelectRun={() => {}} onPostMortem={() => {}} onReport={() => {}} onSend={() => {}} onHybrid={() => {}} /></>)
@@ -65,7 +75,7 @@ describe('Papiers reads in the event log', () => {
     )
     render(<SummaryFeed view={v} onSelectRun={() => {}} onPostMortem={() => {}} onReport={() => {}} onSend={() => {}} onHybrid={() => {}} />)
     const link = screen.getByTestId('informed-by')
-    expect(link.textContent).toBe('Informed by note cnv_1Accumulation is performed in FP32 for numerical accuracy.')
+    expect(link.textContent).toBe('Informed by Papiers noteAccumulation is performed in FP32 for numerical accuracy')
     const target = document.getElementById('papiers-cnv_1')!
     target.classList.remove('flash')
     fireEvent.click(link)

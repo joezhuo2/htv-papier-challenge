@@ -132,14 +132,29 @@ describe('live controls', () => {
     expect(within(screen.getByTestId('run-detail')).getByText('timed out (15 s harness limit)')).toBeTruthy()
   })
 
-  it('save as replay downloads the received events as JSONL', () => {
+  it('save is labeled partial until session_finished, then saves the whole replay', () => {
     const { push } = setup()
     push(...recorded.slice(0, 5))
     const urls: Blob[] = []
     vi.stubGlobal('URL', { createObjectURL: (b: Blob) => { urls.push(b); return 'blob:x' }, revokeObjectURL: () => {} })
-    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const names: string[] = []
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { names.push(this.download) })
+    expect(screen.queryByRole('button', { name: 'save as replay' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'save partial replay' }))
+    expect(names[0]).toMatch(/-partial\.jsonl$/)
+    push(...recorded.slice(5))
     fireEvent.click(screen.getByRole('button', { name: 'save as replay' }))
-    expect(click).toHaveBeenCalled()
-    expect(urls).toHaveLength(1)
+    expect(names[1]).not.toMatch(/partial/)
+    expect(urls).toHaveLength(2)
+  })
+
+  it('a provisional result shows the cue to send the Precision directive', () => {
+    const { push } = setup()
+    const h1 = recorded.findIndex(e => e.type === 'verdict' && e.hypothesis === 'H1')
+    push(...recorded.slice(0, h1 + 1))
+    expect(screen.getByTestId('provisional-cue').textContent).toContain('H1 passed provisionally under the Speed tolerance')
+    expect(within(screen.getByTestId('tab-precision')).getByText('check')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to the Precision lens' }))
+    expect(screen.getByTestId('tab-precision').getAttribute('aria-selected')).toBe('true')
   })
 })
