@@ -164,6 +164,8 @@ export type DemoEvent =
   | Ev<'summary', { summary: Summary }>
   | Ev<'help_requested', { help: HelpRequest }>
   | Ev<'help_answered', { help: string; option: string; note?: string; by: Lens }>
+  // a pending request withdrawn because a verdict flip rejected its branch and nothing continues it. A reissued request reuses its id.
+  | Ev<'help_cancelled', { help: string; reason: string }>
   | Ev<'plan_change', { help: string; text: string }>
   | Ev<'agent_log', { text: string }>
   // Papiers is read-only, findings are exported as local files for manual import

@@ -34,7 +34,7 @@ function SummaryCard({ view, item, onSelectRun, onPostMortem, collapsed, onToggl
   // verdicts up to this card, so a later flip shows on the later card and the earlier card keeps its snapshot
   const trail = (item.hypothesis ? view.trail[item.hypothesis] ?? [] : []).filter(t => t.t <= item.t)
   // written while another branch waits on a help request
-  const waiting = view.helps.find(x => x.t < item.t && (!x.answer || x.answer.t > item.t) && x.help.blocks !== summary.branch)
+  const waiting = view.helps.find(x => x.t < item.t && (!x.answer || x.answer.t > item.t) && !x.cancelled && x.help.blocks !== summary.branch)
   const head = (
     <div className="row">
       <h3>{item.hypothesis ? <span className="mono">{item.hypothesis}</span> : null} on <span className="mono">{summary.branch}</span></h3>

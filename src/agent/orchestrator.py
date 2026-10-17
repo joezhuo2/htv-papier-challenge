@@ -74,6 +74,10 @@ class Hyp:
         return d | ({"note": self.note} if self.note else {})
 
 
+def open_help(x):
+    return not (x["answered"] or x["expired"] or x["cancelled"])
+
+
 def bound_owner(bound):
     return {"speed": "Speed lens", "precision": "Precision lens"}.get(bound["set_by"], "default")
 
@@ -510,6 +514,7 @@ class Orchestrator:
                 self.summarize(h, self.branches[h.branch], f"Fork: keep what worked in {h.id} and drop {ruled_out(h.params, self.start_point(h.branch)[0])}.")
                 self.export_failure(h, self.branches[h.branch])
                 self.pivot(h)
+                self.refresh_helps(h)
         self.maybe_hybrid()
 
     # ---- branches ----
@@ -578,7 +583,7 @@ class Orchestrator:
         if h.metrics.latency_ms is None:
             self.post_mortem(h)
         b.fails = b.fails + 1 if h.metrics.latency_ms is None else 0
-        if b.fails >= 2 and not any(x["branch"] == b.id and not x["answered"] and not x["expired"] for x in self.helps.values()):
+        if b.fails >= 2 and not any(x["branch"] == b.id and open_help(x) for x in self.helps.values()):
             target = b.lens if b.lens != "both" else "speed"
             self.summarize(h, b, f"Ask the {target.capitalize()} lens how to continue after two failed runs in a row.")
             self.request_help(h, b, target, failed=True)
@@ -631,7 +636,49 @@ class Orchestrator:
     # ---- help requests ----
 
     def pending(self):
-        return any(not x["answered"] and not x["expired"] for x in self.helps.values()) or bool(self.hybrid and self.hybrid["state"] == "proposed")
+        return any(open_help(x) for x in self.helps.values()) or bool(self.hybrid and self.hybrid["state"] == "proposed")
+
+    def successor(self, b):
+        """The open branch that continues a rejected one: its pivot, the newest open child on the same lens."""
+        kids = [x for x in self.branches.values() if b.id in x.parents and x.lens == b.lens and x.status in ("running", "waiting_on_human")]
+        return kids[-1] if kids else None
+
+    def live(self, bid):
+        """The branch a help answer applies to: the branch itself, or its successor once it was rejected. None when nothing continues it."""
+        b = self.branches[bid]
+        return (self.successor(b) if b.status == "rejected" else b)
+
+    def evidence(self, lineage):
+        return [f"{x.run}: {x.metrics.latency_ms:.3f} ms, " + ("provisionally confirmed" if x.judgment.provisional else x.judgment.verdict)
+                + (f", {c.observed}" if (c := next((c for c in x.judgment.checks if c.name.startswith("speedup")), None)) else "")
+                for x in reversed(self.hyps) if x.branch in lineage and x.metrics and x.metrics.latency_ms and x.judgment][:3]
+
+    def refresh_helps(self, h):
+        """After h's verdict flipped, a pending request on a rejected branch moves to its successor (or is withdrawn when none is open),
+        and any pending request whose evidence lists h's run is reissued with the current verdicts. Same id, so an answer still lands."""
+        for hid, x in self.helps.items():
+            if not open_help(x):
+                continue
+            b = self.branches[x["branch"]]
+            moved = b.status == "rejected"
+            if not moved and not any(e.startswith(f"{h.run}:") for e in x["help"]["evidence"]):
+                continue
+            succ = self.live(b.id)
+            if succ is None:
+                x["cancelled"] = True
+                self.log.emit("help_cancelled", help=hid, reason=f"{b.id} was rejected when {h.id} flipped under the Precision bound and no branch continues it, "
+                                                                 "so there is nothing left to tune.")
+                continue
+            req = dict(x["help"])
+            if not x["failed"]:
+                req["evidence"] = self.evidence(x["lineage"])
+            if moved:
+                req["question"] = (f"{req['question']} {b.id} was rejected when {h.id} flipped under the Precision bound, so an answer now applies to {succ.id}, "
+                                   "which keeps running meanwhile.")
+                req["blocks"] = succ.id
+                x["branch"] = succ.id
+            x["help"], x["t"] = req, self.log.clock()
+            self.log.emit("help_requested", help=req)
 
     def request_help(self, h: Hyp, b: Branch, target, failed=False):
         lineage = self.lineage(b.id)
@@ -646,8 +693,7 @@ class Orchestrator:
         else:
             speed = next(c for c in h.judgment.checks if c.name.startswith("speedup"))
             question = f"Branch {b.id} reached {speed.observed.split(' ')[0]} against my {speed.predicted} prediction, inside the noise band. Should I keep tuning or change approach?"
-            evidence = [f"{x.run}: {x.metrics.latency_ms:.3f} ms, {x.judgment.verdict}" + (f", {c.observed}" if (c := next((c for c in x.judgment.checks if c.name.startswith("speedup")), None)) else "")
-                        for x in reversed(self.hyps) if x.branch in lineage and x.metrics and x.metrics.latency_ms and x.judgment][:3]
+            evidence = self.evidence(lineage)
             options = [{"id": "tile_search", "label": "Keep tuning tiles and warps"},
                        {"id": "accept", "label": f"Accept {speed.observed.split(' ')[0]} and stop this branch"},
                        {"id": "other", "label": "Suggest something else"}]
@@ -659,7 +705,8 @@ class Orchestrator:
             "default": "tile_search", "blocks": b.id, "deadline_s": int(self.help_deadline_s),
             "what_changes": "Keep tuning adds two more iterations on this branch, accept closes it, and a suggestion becomes the next hypothesis to test.",
         }
-        self.helps[hid] = {"help": req, "branch": b.id, "t": self.log.clock(), "answered": False, "expired": False}
+        self.helps[hid] = {"help": req, "branch": b.id, "t": self.log.clock(), "answered": False, "expired": False, "cancelled": False,
+                           "lineage": lineage, "failed": failed}
         self.log.emit("help_requested", help=req)
         b.status = "waiting_on_human"
         self.log.emit("branch_status", branch=b.id, status="waiting_on_human")
@@ -674,10 +721,12 @@ class Orchestrator:
             self.log.emit("agent_log", text=f"No approval for the hybrid of {' and '.join(x['branches'])} within {self.help_deadline_s:.0f} s, so it is not run. "
                                             "Approving it later still runs it.")
         for hid, x in self.helps.items():
-            if x["answered"] or x["expired"] or self.log.clock() - x["t"] < x["help"]["deadline_s"]:
+            if not open_help(x) or self.log.clock() - x["t"] < x["help"]["deadline_s"]:
                 continue
             x["expired"] = True
-            b = self.branches[x["branch"]]
+            b = self.live(x["branch"])
+            if b is None:
+                continue
             self.promise(hid, b, 2)
             self.log.emit("plan_change", help=hid, text=f"No answer to {hid} by the deadline, so I am proceeding on the default assumption: keep tuning tiles and warps on {b.id}. "
                                                         "Results on this branch are flagged assumption pending until an answer arrives.")
@@ -692,15 +741,23 @@ class Orchestrator:
         if x and x["answered"] and x.get("cmd", {}).get("option") == cmd["option"]:
             self.note(f"duplicate answer to {cmd['help']} ignored")  # the same answer delivered twice, for example after a reconnect
             return
-        if not x or x["answered"] or cmd["option"] not in {o["id"] for o in x["help"]["options"]}:
-            self.log.emit("agent_log", text=f"Ignored an answer to {cmd['help']}: unknown request, unknown option, or already answered.")
+        if not x or x["answered"] or x["cancelled"] or cmd["option"] not in {o["id"] for o in x["help"]["options"]}:
+            self.log.emit("agent_log", text=f"Ignored an answer to {cmd['help']}: unknown request, unknown option, withdrawn, or already answered.")
             return
         x["answered"], x["cmd"] = True, cmd
         note = (cmd.get("note") or "").strip()
         self.log.emit("help_answered", help=cmd["help"], option=cmd["option"], by=cmd["by"], **({"note": note} if note else {}))
-        b = self.branches[x["branch"]]
         late = "The answer arrived after the deadline, so I am revising the default. " if x["expired"] else ""
         lens = cmd["by"].capitalize()
+        b = self.live(x["branch"])
+        if b is None:
+            text = f"{late}{x['branch']} was rejected and no branch continues it, so I am not reopening it. The answer is recorded."
+            self.log.emit("plan_change", help=cmd["help"], text=text)
+            self.export_answer(x["help"], cmd, text)
+            return
+        if b.id != x["branch"]:
+            late += f"{x['branch']} was rejected, so the answer applies to its successor {b.id}. "
+            x["branch"] = b.id
         b.misses = 0
         if cmd["option"] == "accept":
             text = f"{late}Because the {lens} lens accepts the current result, I am closing {b.id} and keeping its best configuration."

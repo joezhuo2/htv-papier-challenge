@@ -99,7 +99,7 @@ REQUIRED = {
     "run_started": {"run", "branch", "hypothesis"}, "run_finished": {"run"},
     "verdict": {"hypothesis", "verdict", "provisional", "reason", "checks", "bound"}, "post_mortem": {"post_mortem"}, "summary": {"summary"},
     "agent_log": {"text"}, "session_finished": {"ledger", "best"}, "papiers_context": set(), "findings_exported": {"items"},
-    "help_requested": {"help"}, "help_answered": {"help", "option", "by"}, "plan_change": {"help", "text"}, "agent_error": {"kind", "text"},
+    "help_requested": {"help"}, "help_answered": {"help", "option", "by"}, "help_cancelled": {"help", "reason"}, "plan_change": {"help", "text"}, "agent_error": {"kind", "text"},
     "hybrid_proposed": {"branches", "text"},
 }
 HELP_KEYS = {"id", "target", "question", "evidence", "options", "default", "blocks", "deadline_s", "what_changes"}
@@ -991,4 +991,38 @@ def test_constraint_directives_are_bounds_and_a_repeated_hunch_is_retested_on_th
     assert h4["params"] == w8 | {"gelu": "approx"} and h4["note"] == "Hunch from the Speed lens in directive d2, a retest of H3 on the current best tiles"
     assert h4["claim"].startswith("Retest of H3: gelu exact to approx on the current best 128x128x32 tiles, 8 warps")
     assert not any(tag.startswith(f"{h4['branch']}-1") for _, tag, _ in o.ask.calls)  # built in code, no model call
+    assert_contract(o.log.events)
+
+
+# ---- help requests after a verdict flip ----
+
+def test_a_flip_moves_a_pending_help_request_to_the_successor_and_keep_tuning_never_revives_the_rejected_branch(tmp_path):
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"warps": 8}, 1.02), default="no json"), main_iters=1, branch_iters=2, help_deadline_s=30)
+    asked = lambda: bool(of(o, "help_requested"))
+    reissued = lambda: len(of(o, "help_requested")) > 1
+    drive(o, [(judged(o, 1), SPEED), (asked, {"type": "add_directive", "lens": "precision", "text": "Max error under 1e-3 on both batches."}),
+              (reissued, {"type": "answer_help", "help": "hq1", "option": "tile_search", "by": "speed"})])
+    first, again = of(o, "help_requested")[:2]
+    assert first["help"]["blocks"] == "speed" and any(e.startswith("r2:") and "provisionally confirmed" in e for e in first["help"]["evidence"])
+    assert again["help"]["id"] == "hq1" and again["help"]["blocks"] == "speed2" and "applies to speed2" in again["help"]["question"]
+    assert any(e.startswith("r2:") and "rejected" in e for e in again["help"]["evidence"])
+    assert not any("confirmed" in e for e in again["help"]["evidence"] if e.startswith("r2:"))
+    statuses = [e["status"] for e in of(o, "branch_status") if e["branch"] == "speed"]
+    assert statuses[statuses.index("rejected"):].count("running") == 0
+    plan = next(e["text"] for e in of(o, "plan_change") if e["help"] == "hq1")
+    assert "speed2" in plan and o.extra.get("speed2") == 2 and "speed" not in o.extra
+    assert_contract(o.log.events)
+
+
+def test_a_flip_withdraws_a_help_request_when_nothing_continues_the_branch(tmp_path):
+    from agent import orchestrator
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"warps": 8}, 1.02), default="no json"), main_iters=1, branch_iters=2, help_deadline_s=30)
+    o.pivot = lambda h: None  # the per-lens branch cap leaves no successor
+    asked = lambda: bool(of(o, "help_requested"))
+    cancelled = lambda: bool(of(o, "help_cancelled"))
+    drive(o, [(judged(o, 1), SPEED), (asked, {"type": "add_directive", "lens": "precision", "text": "Max error under 1e-3 on both batches."}),
+              (cancelled, {"type": "answer_help", "help": "hq1", "option": "tile_search", "by": "speed"})])
+    assert of(o, "help_cancelled")[0]["help"] == "hq1" and "no branch continues it" in of(o, "help_cancelled")[0]["reason"]
+    assert not of(o, "help_answered") and any("withdrawn" in e["text"] for e in of(o, "agent_log"))
+    assert orchestrator.open_help(o.helps["hq1"]) is False
     assert_contract(o.log.events)

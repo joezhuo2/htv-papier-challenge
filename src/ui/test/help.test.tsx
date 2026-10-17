@@ -93,3 +93,25 @@ describe('post-mortem', () => {
     expect(within(cards.at(-1)!).getByRole('button', { name: 'Open post-mortem' })).toBeTruthy()
   })
 })
+
+describe('help request after a verdict flip', () => {
+  const base = demoScript.slice(0, demoScript.findIndex(e => e.type === 'help_requested') + 1)
+  const req = base.at(-1) as Extract<(typeof demoScript)[number], { type: 'help_requested' }>
+
+  it('a reissued request replaces the card in place with the fresh evidence', () => {
+    const again = { ...req, t: req.t + 1000, help: { ...req.help, blocks: 'fast2', evidence: ['r2: 0.520 ms, rejected'] } }
+    const view = fold([...base, again])
+    expect(view.helps.filter(h => h.help.id === req.help.id)).toHaveLength(1)
+    expect(view.helps[0].help.blocks).toBe('fast2')
+    expect(view.helps[0].help.evidence).toEqual(['r2: 0.520 ms, rejected'])
+  })
+
+  it('a withdrawn request shows the reason and no answer form', () => {
+    const view = { ...fold([...base, { t: req.t + 1000, type: 'help_cancelled', help: req.help.id, reason: 'fast was rejected and no branch continues it.' }]), lens: 'speed' as const }
+    render(<HelpCard view={view} hv={view.helps[0]} now={req.t + 2000} sent={[]} onSend={vi.fn()} />)
+    const card = screen.getByTestId(`help-${req.help.id}`)
+    expect(within(card).getByText('withdrawn')).toBeTruthy()
+    expect(within(card).getByText(/no branch continues it/)).toBeTruthy()
+    expect(within(card).queryByText('Send answer')).toBeNull()
+  })
+})

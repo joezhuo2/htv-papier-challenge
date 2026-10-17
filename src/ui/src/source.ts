@@ -45,7 +45,7 @@ export const REQUIRED: Record<DemoEvent['type'], string[]> = {
   session_started: ['baselines', 'branch'], papiers_context: [], directive_added: ['directive'], conflict_detected: ['directives', 'reason'],
   branch_created: ['branch'], branch_status: ['branch', 'status'], hypothesis_proposed: ['hypothesis'], run_started: ['run', 'branch', 'hypothesis'],
   run_finished: ['run'], verdict: ['hypothesis', 'verdict', 'provisional', 'reason', 'checks', 'bound'], post_mortem: ['post_mortem'],
-  summary: ['summary'], help_requested: ['help'], help_answered: ['help', 'option', 'by'], plan_change: ['help', 'text'], agent_log: ['text'],
+  summary: ['summary'], help_requested: ['help'], help_answered: ['help', 'option', 'by'], help_cancelled: ['help', 'reason'], plan_change: ['help', 'text'], agent_log: ['text'],
   findings_exported: ['items'], report_ready: ['report'], hybrid_proposed: ['branches', 'text'], session_finished: ['ledger', 'best'],
   agent_error: ['kind', 'text'],
 }

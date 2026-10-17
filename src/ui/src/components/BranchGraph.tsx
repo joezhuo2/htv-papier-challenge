@@ -67,7 +67,7 @@ export function BranchGraph({ view, onSelectBranch, onSelectRun, showPending = t
           const { x, y } = pos.get(b.id)!
           const sel = view.selected.branch === b.id
           const runs = view.runs.filter(r => r.branch === b.id && (showPending || r.finished !== undefined))
-          const blocker = view.helps.find(h => h.help.blocks === b.id && !h.answer)
+          const blocker = view.helps.find(h => h.help.blocks === b.id && !h.answer && !h.cancelled)
           const s = b.status
           const dash = s === 'rejected' ? '5 3' : undefined
           const roomy = (b.id.length + statusWord[s].length + 1) * fs * 0.62 + 40 <= w

@@ -33,6 +33,16 @@ export function HelpCard({ view, hv, now, sent, onSend }: Props) {
     )
   }
 
+  if (hv.cancelled) {
+    return (
+      <article className="card" data-testid={`help-${help.id}`}>
+        <div className="row"><h3>Help request <span className="mono">{help.id}</span></h3><span className="tag">withdrawn</span><MockTag on={hv.mock} /></div>
+        <p className="small">{help.question}</p>
+        <p className="small muted">{hv.cancelled}</p>
+      </article>
+    )
+  }
+
   if (view.finished) {
     return (
       <article className="card" data-testid={`help-${help.id}`}>
@@ -53,7 +63,7 @@ export function HelpCard({ view, hv, now, sent, onSend }: Props) {
       </div>
       <p>{help.question}</p>
       <p className="meta" data-testid="help-status">
-        <span>Blocks <span className="mono">{help.blocks}</span></span>
+        <span>{view.branches.find(b => b.id === help.blocks)?.status === 'running' ? 'Applies to' : 'Blocks'} <span className="mono">{help.blocks}</span></span>
         <span>meanwhile {meanwhile.length ? meanwhile.map(b => <span key={b} className="mono">{b} </span>) : 'nothing else runs'}</span>
         <span>default: {label(help.default)}</span>
       </p>

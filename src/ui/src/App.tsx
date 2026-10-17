@@ -83,12 +83,12 @@ export function App({ source }: { source: Source }) {
     URL.revokeObjectURL(a.href)
   }
 
-  const waiting = view.finished ? [] : [...new Set(view.helps.filter(h => !h.answer).map(h => h.help.target))]
+  const waiting = view.finished ? [] : [...new Set(view.helps.filter(h => !h.answer && !h.cancelled).map(h => h.help.target))]
   // a result that passes only under the Speed tolerance: the moment to send the Precision directive
   const provisional = view.finished ? [] : view.hypotheses.filter(h => view.verdicts[h.id]?.verdict === 'confirmed' && view.verdicts[h.id]?.provisional)
   const mine = view.helps.filter(h => h.help.target === view.lens)
-  const open = mine.filter(h => !h.answer && !view.finished)
-  const answered = mine.filter(h => h.answer || view.finished)
+  const open = mine.filter(h => !h.answer && !h.cancelled && !view.finished)
+  const answered = mine.filter(h => h.answer || h.cancelled || view.finished)
 
   return (
     <div className="app" data-lens={view.lens}>

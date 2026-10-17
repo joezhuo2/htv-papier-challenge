@@ -32,6 +32,7 @@ export interface HelpView {
   mock: boolean
   answer?: { option: string; note?: string; by: Lens; t: number }
   expired: boolean
+  cancelled?: string
 }
 
 export interface NoteView { id: string; title: string; excerpt: string; t: number; query?: string }
@@ -187,8 +188,15 @@ export function reduce(prev: View, a: Action): View {
       const verdict = run && v.verdicts[run.hypothesis]
       return { ...v, feed: [...v.feed, { kind: 'summary', summary: e.summary, run: run?.id, hypothesis: run?.hypothesis, verdict, t: e.t, mock }] }
     }
-    case 'help_requested':
-      return { ...v, helps: [...v.helps, { help: e.help, t: e.t, mock, expired: false }] }
+    case 'help_requested': {
+      // a reissued request (fresh evidence after a verdict flip, or moved to a successor branch) replaces the card in place
+      const hv = { help: e.help, t: e.t, mock, expired: false }
+      return v.helps.some(h => h.help.id === e.help.id)
+        ? { ...v, helps: v.helps.map(h => (h.help.id === e.help.id ? hv : h)) }
+        : { ...v, helps: [...v.helps, hv] }
+    }
+    case 'help_cancelled':
+      return { ...v, helps: v.helps.map(h => (h.help.id === e.help ? { ...h, cancelled: e.reason } : h)) }
     case 'help_answered': {
       const answer = { option: e.option, note: e.note, by: e.by, t: e.t }
       return {
