@@ -29,6 +29,7 @@ build-backend = "hatchling.build"
 dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.1",
+    "ruff>=0.17.1",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -21,9 +21,8 @@ describe('golden session', () => {
 
   it('uses the same payload keys as the mock for every shared event type', () => {
     const strip = (type: DemoEvent['type'], k: string[]) => k.filter(x => !(OPTIONAL[type] ?? []).includes(x))
-    for (const e of golden) {
-      const twin = demoScript.find(m => m.type === e.type)
-      if (twin) expect(strip(e.type, keys(e)), e.type).toEqual(strip(e.type, keys(twin)))
-    }
+    const shared = golden.flatMap(e => demoScript.filter(m => m.type === e.type).slice(0, 1).map(twin => [e, twin] as const))
+    expect(shared.length).toBeGreaterThan(10)
+    expect(shared.map(([e]) => [e.type, strip(e.type, keys(e))])).toEqual(shared.map(([e, twin]) => [e.type, strip(e.type, keys(twin))]))
   })
 })

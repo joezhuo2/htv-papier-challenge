@@ -36,7 +36,7 @@ describe('Papiers reads in the event log', () => {
 
   it('shows no matching notes for an empty search, in the panel and the feed', () => {
     const v = fold([start, { t: 3200, type: 'papiers_context', query: 'accumulation numerical error' }])
-    render(<><PapiersPanel view={v} /><SummaryFeed view={v} onSelectRun={() => {}} onPostMortem={() => {}} onReport={() => {}} hybrid={() => null} /></>)
+    render(<><PapiersPanel view={v} /><SummaryFeed view={v} onSelectRun={() => {}} onPostMortem={() => {}} onReport={() => {}} onSend={() => {}} onHybrid={() => {}} /></>)
     expect(screen.getByTestId('papiers-read').textContent).toBe('0:03query "accumulation numerical error"No matching notes.')
     expect(screen.getByText(/no matching notes for "accumulation numerical error"/)).toBeTruthy()
     expect(v.notes).toHaveLength(0)
@@ -47,7 +47,7 @@ describe('Papiers reads in the event log', () => {
     render(
       <div className="col"><PapiersPanel view={v} /></div>,
     )
-    render(<SummaryFeed view={v} onSelectRun={() => {}} onPostMortem={() => {}} onReport={() => {}} hybrid={() => null} />)
+    render(<SummaryFeed view={v} onSelectRun={() => {}} onPostMortem={() => {}} onReport={() => {}} onSend={() => {}} onHybrid={() => {}} />)
     const link = screen.getByTestId('informed-by')
     expect(link.textContent).toBe('Informed by note cnv_1Accumulation is performed in FP32 for numerical accuracy.')
     const target = document.getElementById('papiers-cnv_1')!

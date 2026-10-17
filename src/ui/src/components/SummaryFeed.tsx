@@ -3,14 +3,16 @@ import type { FeedItem, View } from '../state/reducer'
 import { boundText, clock, hypothesisOf, lensName, ms, parentBest, predictionText, runOf, sci, times, windowText } from '../state/derive'
 import { Def, MockTag, VerdictChip } from './Glyph'
 import { InformedBy } from './PapiersPanel'
-import type { ReactNode } from 'react'
+import type { Command } from '@contract/types'
+import { HybridCard } from './Tier2'
 
 interface Props {
   view: View
   onSelectRun: (run: string) => void
   onPostMortem: (h: string) => void
   onReport: () => void
-  hybrid: (item: Extract<FeedItem, { kind: 'hybrid' }>) => ReactNode
+  onSend: (c: Command) => void
+  onHybrid: (approved: boolean) => void
   // working states come only from real events: running cards outside recorded replay, choosing only in live mode
   working?: { runs: boolean; choosing: boolean }
 }
@@ -133,14 +135,16 @@ export function SummaryFeed(p: Props) {
     }
   }, [])
   // follow the newest card unless the presenter scrolled the feed in the last few seconds
+  const items = view.feed.length
   useEffect(() => {
+    if (!items) return
     const box = end.current?.closest('.col') as HTMLElement | null
     const cards = box?.querySelectorAll<HTMLElement>('[data-testid="summary-card"]')
     const last = cards?.[cards.length - 1] ?? null
     // follow the newest item, but never scroll the newest summary card's top out of view
     if (box && end.current && last && Date.now() - touched.current > 8000)
       box.scrollTop = Math.min(end.current.offsetTop - box.clientHeight + 12, last.offsetTop - 12)
-  }, [view.feed.length])
+  }, [items])
 
   const pending = view.runs.filter(r => r.finished === undefined)
   const lastVerdict = Math.max(-1, ...Object.values(view.trail).flat().map(t => t.t))
@@ -203,7 +207,7 @@ export function SummaryFeed(p: Props) {
               </p>
             )
           case 'hybrid':
-            return <div key={i}>{p.hybrid(f)}</div>
+            return <HybridCard key={i} view={view} item={f} onSend={p.onSend} onDecide={p.onHybrid} />
         }
       })}
       {p.working?.runs ? pending.map(r => {

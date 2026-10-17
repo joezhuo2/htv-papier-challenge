@@ -45,7 +45,7 @@ def user_prompt(params, last):
 
 def parse(text):
     """Extracts and validates a hypothesis. Returns (hypothesis, None) or (None, reason)."""
-    m = re.search(r"\{.*\}", text, re.S)
+    m = re.search(r"\{.*\}", text, re.DOTALL)
     if not m:
         return None, "no json object"
     try:

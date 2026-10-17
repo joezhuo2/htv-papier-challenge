@@ -27,7 +27,7 @@ def valid(cmd):
 
 
 def check_gpu():
-    out = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True, timeout=10)
+    out = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True, timeout=10, check=False)
     return out.returncode == 0 and bool(out.stdout.strip()), out.stdout.strip() or out.stderr.strip()[:200]
 
 

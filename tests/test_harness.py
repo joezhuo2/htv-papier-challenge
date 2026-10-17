@@ -13,8 +13,8 @@ TYPES_TS = Path(__file__).parents[1] / "src/contract/types.ts"
 
 
 def ts_metrics_fields():
-    block = re.search(r"interface Metrics \{(.*?)\}", TYPES_TS.read_text(), re.S).group(1)
-    return dict(re.findall(r"^\s*(\w+): (\w+)", block, re.M))
+    block = re.search(r"interface Metrics \{(.*?)\}", TYPES_TS.read_text(), re.DOTALL).group(1)
+    return dict(re.findall(r"^\s*(\w+): (\w+)", block, re.MULTILINE))
 
 
 def test_contract_fields_match_types_ts():
@@ -52,7 +52,7 @@ def test_timeout_kills_process_group(tmp_path):
     m = runner.run({"target": "triton"}, timeout=1, cmd=[sys.executable, "-c", SLOW], runs=tmp_path)
     assert m.timed_out and m.error == "timeout"
     assert m.wall_s - m.startup_s < runner.TIMEOUT_S
-    assert subprocess.run(["pgrep", "-f", "sleep 317.25"], capture_output=True).returncode == 1
+    assert subprocess.run(["pgrep", "-f", "sleep 317.25"], capture_output=True, check=False).returncode == 1
 
 
 def test_startup_timeout(tmp_path, monkeypatch):

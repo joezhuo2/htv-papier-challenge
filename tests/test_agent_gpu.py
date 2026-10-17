@@ -1,14 +1,13 @@
-import json
 
 import pytest
+from test_agent import Asker, P, assert_contract, h, of, run_with
 
 from agent.events import Log
 from agent.orchestrator import Orchestrator
+from agent.verdict import judge
 from harness import noise, runner
 from harness.data import BOUND
 from harness.kernel import NAIVE
-from agent.verdict import judge
-from test_agent import P, Asker, h, of, run_with, assert_contract
 
 pytestmark = pytest.mark.gpu
 

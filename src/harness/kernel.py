@@ -73,7 +73,7 @@ def fused_kernel(
     wp = w_ptr + rk[:, None] * swk + (rn % N)[None, :] * swn
 
     acc = tl.zeros((BM, BN), dtype=tl.float16 if ACC16 else tl.float32)
-    for k in range(0, tl.cdiv(K, BK)):
+    for k in range(tl.cdiv(K, BK)):
         xv = tl.load(xp, mask=rk[None, :] < K - k * BK, other=0.0)
         wv = tl.load(wp, mask=rk[:, None] < K - k * BK, other=0.0)
         acc = tl.dot(xv, wv, acc, out_dtype=tl.float16 if ACC16 else tl.float32)

@@ -1,0 +1,40 @@
+{
+  "plugins": [
+    "react",
+    "typescript",
+    "vitest",
+    "import"
+  ],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error"
+  },
+  "rules": {
+    "react/react-in-jsx-scope": "off",
+    "react/rules-of-hooks": "error",
+    "react/exhaustive-deps": "off",
+    "no-unused-vars": [
+      "error",
+      {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_",
+        "destructuredArrayIgnorePattern": "^_",
+        "ignoreRestSiblings": true
+      }
+    ],
+    "import/no-unassigned-import": [
+      "error",
+      {
+        "allow": [
+          "**/*.css"
+        ]
+      }
+    ],
+    "vitest/valid-expect": "off",
+    "vitest/require-mock-type-parameters": "off"
+  },
+  "ignorePatterns": [
+    "dist",
+    "node_modules"
+  ]
+}

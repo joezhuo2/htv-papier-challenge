@@ -5,8 +5,8 @@ Branches run one at a time on the single GPU. Commands from the UI (directives) 
 
 import json
 import queue
-import threading
 import re
+import threading
 import time
 from dataclasses import dataclass, field, replace
 
@@ -528,7 +528,7 @@ class Orchestrator:
         """LLM prose for the explanation layer. Falls back to None on any API or format failure, the caller has a factual default."""
         try:
             text = self.ask(messages, model, tag)
-            found = re.search(r"\{.*\}", text, re.S)
+            found = re.search(r"\{.*\}", text, re.DOTALL)
             d = json.loads(found.group(0)) if found else {}
         except Exception as e:  # noqa: BLE001, a slow or failing model must not stop the research loop
             self.log.emit("agent_log", text=f"Explanation model unavailable ({type(e).__name__}), using the factual summary.")

@@ -15,7 +15,7 @@ import { HelpCard } from './components/HelpCard'
 import { PostMortemCard } from './components/PostMortem'
 import { Banner } from './components/Banner'
 import { PapiersPanel } from './components/PapiersPanel'
-import { HybridCard, Ledger, ReportView } from './components/Tier2'
+import { Ledger, ReportView } from './components/Tier2'
 import { clock, latestRun } from './state/derive'
 
 const typing = (el: EventTarget | null) => el instanceof HTMLElement && el.closest('input, textarea, select, [contenteditable]') !== null
@@ -27,7 +27,11 @@ export function App({ source }: { source: Source }) {
   const [closedPm, setClosedPm] = useState<string[]>([])
   const [tab, setTab] = useState<'research' | 'report' | 'result'>('research')
   // the result screen opens once when the session finishes, and a restart returns to the research view
-  useEffect(() => setTab(view.finished ? 'result' : 'research'), [view.finished])
+  const [wasFinished, setWasFinished] = useState(view.finished)
+  if (wasFinished !== view.finished) {
+    setWasFinished(view.finished)
+    setTab(view.finished ? 'result' : 'research')
+  }
   const openPm = (h: string) => {
     setClosedPm(c => c.filter(x => x !== h))
     requestAnimationFrame(() => {
@@ -131,7 +135,7 @@ export function App({ source }: { source: Source }) {
           <SummaryFeed
             working={{ runs: source.mode !== 'replay', choosing: source.mode === 'live' }}
             view={view} onSelectRun={selectRun} onPostMortem={openPm} onReport={() => setTab('report')}
-            hybrid={f => <HybridCard view={view} item={f} onSend={s.send} onDecide={approved => dispatch({ type: 'ui/hybrid', approved })} />}
+            onSend={s.send} onHybrid={approved => dispatch({ type: 'ui/hybrid', approved })}
           />
           <hr className="divider" />
           <Ledger view={view} />

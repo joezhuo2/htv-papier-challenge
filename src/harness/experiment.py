@@ -57,6 +57,10 @@ def interleaved(fns):
     return per
 
 
+def call(f, x, w, b):
+    return lambda: f(x, w, b)
+
+
 def ref_fn(ref):
     if ref["target"] == "eager":
         return data.eager
@@ -94,7 +98,7 @@ def measure(spec):
         try:
             y = fn(x, w, b)
             torch.cuda.synchronize()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001, any kernel failure (compile, launch, resources) is a measured result
             m.compiled_ok = False
             m.error = f"{type(e).__name__}: {e}"[:2000]
             return m
@@ -107,7 +111,7 @@ def measure(spec):
             m.max_abs_out = ref.abs().max().item()
             if spec.get("refs"):
                 # speedups come from per-round ratios against references timed in the same window, with their spread
-                fns = {"candidate": lambda: fn(x, w, b)} | {k: (lambda f=ref_fn(r): f(x, w, b)) for k, r in spec["refs"].items()}
+                fns = {"candidate": call(fn, x, w, b)} | {k: call(ref_fn(r), x, w, b) for k, r in spec["refs"].items()}
                 per = interleaved(fns)
                 m.latency_ms = statistics.median(per["candidate"])
                 m.latency_std_ms = statistics.stdev(per["candidate"])
@@ -118,7 +122,7 @@ def measure(spec):
                     m.spreads[k] = (max(ratios) - min(ratios)) / 2 / med
                     m.ref_ms[k] = statistics.median(per[k])
             else:
-                m.latency_ms, m.latency_std_ms = time_ms(lambda: fn(x, w, b))
+                m.latency_ms, m.latency_std_ms = time_ms(call(fn, x, w, b))
             m.tflops = tflops(M, N, K, m.latency_ms)
 
     # The default gate is the standard batch only. Adversarial gating comes from the Precision lens.

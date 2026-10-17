@@ -5,7 +5,14 @@ import time
 
 from agent import papiers
 from agent.events import Log
-from agent.llm import FAST_MODEL, GEMINI_FAST_MODEL, GEMINI_STRONG_MODEL, STRONG_MODEL, Client, available
+from agent.llm import (
+    FAST_MODEL,
+    GEMINI_FAST_MODEL,
+    GEMINI_STRONG_MODEL,
+    STRONG_MODEL,
+    Client,
+    available,
+)
 from agent.orchestrator import Orchestrator
 from harness import noise, runner
 

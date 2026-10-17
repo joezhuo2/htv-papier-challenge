@@ -48,7 +48,7 @@ describe('live socket', () => {
     sock().push({ hello: 1 })
     expect(events).toHaveLength(0)
     expect(errors).toHaveLength(2)
-    expect(() => parseMessage('{"t":1}')).toThrow()
+    expect(() => parseMessage('{"t":1}')).toThrow('not a DemoEvent')
   })
 
   it('sends Command objects as JSON when open', () => {

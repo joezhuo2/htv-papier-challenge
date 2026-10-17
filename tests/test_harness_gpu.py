@@ -52,7 +52,7 @@ HANG = ("import time, torch; x = torch.empty(512 * 2**20, dtype=torch.uint8, dev
 
 
 def gpu_used_mb():
-    out = subprocess.run(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"], capture_output=True, text=True)
+    out = subprocess.run(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"], capture_output=True, text=True, check=False)
     return int(out.stdout.split()[0])
 
 
@@ -61,7 +61,7 @@ def test_hang_killed(tmp_path):
     m = runner.run({"target": "triton"}, cmd=[sys.executable, "-c", HANG], runs=tmp_path)
     assert m.timed_out and m.error == "timeout"
     assert m.wall_s - m.startup_s < runner.TIMEOUT_S + 2
-    assert subprocess.run(["pgrep", "-f", "hang-marker-8841"], capture_output=True).returncode == 1
+    assert subprocess.run(["pgrep", "-f", "hang-marker-8841"], capture_output=True, check=False).returncode == 1
     time.sleep(1)
     assert gpu_used_mb() < before + 256, "the killed child's 512 MB allocation was not released"
 

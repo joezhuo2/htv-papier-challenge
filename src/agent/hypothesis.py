@@ -46,7 +46,7 @@ def prompt(branch, directives, start, tried, avoid, notes=(), bound=1e-3):
 
 def parse(text):
     """Returns (hypothesis, None) or (None, reason). Extra keys in params, like free-form code, are refused."""
-    m = re.search(r"\{.*\}", text, re.S)
+    m = re.search(r"\{.*\}", text, re.DOTALL)
     if not m:
         return None, "no json object"
     try:
@@ -68,7 +68,7 @@ def parse(text):
             "params": params}, None
 
 
-BOUND_RE = re.compile(r"(\d+(?:\.\d+)?e-\d+|0\.0+\d+)", re.I)
+BOUND_RE = re.compile(r"(\d+(?:\.\d+)?e-\d+|0\.0+\d+)", re.IGNORECASE)
 
 
 SPEED_TOLERANCE = 2e-2

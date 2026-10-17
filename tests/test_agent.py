@@ -11,7 +11,7 @@ from agent.verdict import judge
 from harness.metrics import Metrics
 
 BAND = 0.0165
-P = dict(block_m=128, block_n=128, block_k=32, warps=4, stages=3, acc="fp32", gelu="exact")
+P = {"block_m": 128, "block_n": 128, "block_k": 32, "warps": 4, "stages": 3, "acc": "fp32", "gelu": "exact"}
 
 
 def met(latency, err=4.9e-4, adv=5.2e-4, ok=True):
@@ -290,6 +290,7 @@ def test_unsupported_commands_are_logged(tmp_path):
 
 def test_websocket_sends_history_then_streams_and_accepts_commands(tmp_path):
     from fastapi.testclient import TestClient
+
     from server.app import create
 
     gate = threading.Event()
@@ -629,6 +630,7 @@ def test_provider_chain_prefers_gemini_only_when_its_key_is_set(monkeypatch):
 
 def test_preflight_reports_each_check_and_start_command_starts_the_session(tmp_path):
     from fastapi.testclient import TestClient
+
     from server.app import create
 
     def boom():

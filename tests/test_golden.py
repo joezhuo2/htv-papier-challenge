@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-from test_agent import P, Asker, h, make, run_with
+from test_agent import Asker, P, h, make, run_with
 
 FIXTURE = Path(__file__).parent / "fixtures" / "golden_session.jsonl"
 

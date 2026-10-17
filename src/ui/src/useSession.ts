@@ -11,13 +11,12 @@ export interface Sent { cmd: Command; t: number; delivered: boolean }
 
 export function useSession(src: Source) {
   const [view, dispatch] = useReducer(reduce, undefined, () => initialView())
-  const [events, setEvents] = useState<DemoEvent[]>()
+  const [events, setEvents] = useState<DemoEvent[] | undefined>(src.mode === 'mock' ? demoScript : undefined)
   const [speed, setSpeedState] = useState(1)
   const [paused, setPaused] = useState(false)
   const [ended, setEnded] = useState(false)
   const [index, setIndex] = useState(0)
   const [now, setNow] = useState(0)
-  const [epoch, setEpoch] = useState(0)
   const [status, setStatus] = useState<LiveStatus>()
   const [error, setError] = useState<string>()
   const [sent, setSent] = useState<Sent[]>([])
@@ -25,23 +24,19 @@ export function useSession(src: Source) {
   const [compression, setCompression] = useState<{ from: number; to: number }>()
   const [autoPause, setAutoPauseState] = useState(false)
   const autoPauseRef = useRef(false)
-  const liveEvents = useRef<DemoEvent[]>([])
-  const [liveCount, setLiveCount] = useState(0)
+  const [liveEvents, setLiveEvents] = useState<DemoEvent[]>([])
   const player = useRef<Player | undefined>(undefined)
   const live = useRef<ReturnType<typeof connectLive> | undefined>(undefined)
-  const last = useRef({ t: 0, wall: Date.now() })
+  const last = useRef({ t: 0, wall: 0 })
   const speedRef = useRef(speed)
 
   useEffect(() => {
-    if (src.mode === 'mock') setEvents(demoScript)
-    else if (src.mode === 'replay') {
-      if (!src.file) setError('Replay mode needs a log, for example ?mode=replay&file=/runs/session.jsonl')
-      else loadLog(src.file).then(raw => {
-        const c = compress(raw)
-        setCompression({ from: raw.at(-1)!.t - raw[0].t, to: c.at(-1)!.t - c[0].t })
-        setEvents(c)
-      }, (err: Error) => setError(`Could not replay ${src.file}: ${err.message}`))
-    }
+    if (src.mode !== 'replay' || !src.file) return
+    loadLog(src.file).then(raw => {
+      const c = compress(raw)
+      setCompression({ from: raw.at(-1)!.t - raw[0].t, to: c.at(-1)!.t - c[0].t })
+      setEvents(c)
+    }, (err: Error) => setError(`Could not replay ${src.file}: ${err.message}`))
   }, [src.mode, src.file])
 
   useEffect(() => {
@@ -54,10 +49,8 @@ export function useSession(src: Source) {
     }, speedRef.current)
     player.current = p
     p.play()
-    setPaused(false)
-    setEnded(false)
     return () => p.cancel()
-  }, [events, epoch])
+  }, [events])
 
   useEffect(() => {
     if (src.mode !== 'live') return
@@ -65,9 +58,7 @@ export function useSession(src: Source) {
       url: src.ws ?? defaultUrl(window.location),
       onEvent: e => {
         last.current = { t: e.t, wall: Date.now() }
-        if (e.type === 'session_started') liveEvents.current = []
-        liveEvents.current.push(e)
-        setLiveCount(liveEvents.current.length)
+        setLiveEvents(l => (e.type === 'session_started' ? [e] : [...l, e]))
         dispatch(e)
       },
       onStatus: setStatus,
@@ -122,7 +113,8 @@ export function useSession(src: Source) {
       setSpeedState(s)
       player.current?.setSpeed(s)
     },
-    restart: () => setEpoch(e => e + 1),
+    // a new array identity restarts the player effect from t=0
+    restart: () => setEvents(e => e && [...e]),
   }
 
   const send = useCallback((cmd: Command) => {
@@ -134,7 +126,7 @@ export function useSession(src: Source) {
   return {
     view, dispatch, controls, send, sent, speed, paused, ended, index, now, status, error, notices, compression, autoPause,
     // every event of the session: the whole log in mock and replay, what has arrived so far in live mode
-    events: src.mode === 'live' ? liveEvents.current.slice(0, liveCount) : events ?? [],
+    events: src.mode === 'live' ? liveEvents : events ?? [],
     retry: () => live.current?.retry(),
   }
 }

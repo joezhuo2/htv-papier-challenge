@@ -84,7 +84,7 @@ Run a headless research session. Each `--directive N:lens:text` is sent once N h
 uv run python -m agent.run --directive "1:speed:Push throughput harder" --directive "3:precision:Max error under 1e-3 on both batches"
 ```
 
-Run the war room live. Start the agent server first (each start begins a new session on the GPU; `MAIN_ITERS`, `BRANCH_ITERS`, `IDLE_S` and the help deadline are configurable), then the UI, and open `http://localhost:5173/?mode=live`:
+Run the war room live. Start the agent server first, then the UI, and open `http://localhost:5173/?mode=live`. The page shows a pre-flight check (GPU, Gemini, NIM, Papiers, each checked against the real endpoint) and the session starts when you press Start; set `AUTOSTART=1` to skip that. A live run is capped at one hypothesis by default (`MAX_HYPS`, empty for no cap), and `MAIN_ITERS`, `BRANCH_ITERS`, `IDLE_S` and `HELP_DEADLINE_S` are configurable. Gemini (`GEMINI_API_KEY`) is the default model provider and NIM the fallback.
 
 ```bash
 uv run uvicorn server.app:app --port 8000
@@ -94,7 +94,17 @@ uv run uvicorn server.app:app --port 8000
 cd src/ui && npm run dev
 ```
 
-The UI also plays the mock script (`?mode=mock`, the default, always tagged mock) and recorded sessions (`?mode=replay&file=/runs/sessions/<id>/events.jsonl`, labelled recorded run).
+The UI also plays the mock script (`?mode=mock`, the default in development, always tagged mock) and recorded sessions (`?mode=replay&file=/runs/sessions/<id>/events.jsonl`, labelled recorded run, with idle gaps over 4 s compressed and disclosed). For judging, build without mock mode; it opens the recorded run at `runs/demo.jsonl`:
+
+```bash
+cd src/ui && npm run build:judging && npx vite preview
+```
+
+Measure timing stability (each candidate is timed interleaved with naive, eager and its parent in one process):
+
+```bash
+uv run python -m harness.stability 10
+```
 
 Tests. The default run is the fast suite, and GPU, Papiers, and long running tests are opt in:
 
@@ -112,6 +122,16 @@ uv run pytest -m slow
 
 ```bash
 cd src/ui && npm test
+```
+
+Lint and type checks:
+
+```bash
+uv run ruff check src tests
+```
+
+```bash
+cd src/ui && npm run lint && npm run typecheck
 ```
 
 ## Layout
