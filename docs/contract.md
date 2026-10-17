@@ -65,3 +65,8 @@
 36. No `help_requested` is emitted when the cap has no unpromised hypothesis left. Help `plan_change` texts end with what the cap has left ("The 8 hypothesis cap has 5 left.").
 37. A rejected verdict whose error checks all passed has the reason "Gain smaller than predicted: ..." or "Slower than its parent: ...", ending "Within every error bound."
 
+## Changes made after the 19:41 recording
+
+38. `session_finished.best` and `final_report.best` `vs_naive` and `vs_eager` are the run's same-window speedups (`run_finished.run.metrics.speedups`), matching its verdict card. Only when a run has none are they the session baselines' latency over the run's, with `cross_window: true`.
+39. In recording mode the session ends `END_WAIT_S` (15 s) after the budget is spent, or after both lenses have spoken with nothing runnable or waiting, with the agent_log line "No directive in 15 s and the 8 hypothesis budget is spent, so the session ends." in the first case.
+

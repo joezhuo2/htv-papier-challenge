@@ -38,7 +38,7 @@ Start the agent server first, then open `?mode=live`. The page shows the pre-fli
 uv run uvicorn server.app:app --port 8000
 ```
 
-Start session is the table demo (capped by `MAX_HYPS`). Start recording runs H0, waits for a lens directive (`DIRECTIVE_WAIT_S`, default 90 s, then it continues on main with hypotheses flagged as a default), and runs until Stop or `RECORD_HYPS` hypotheses (default 8), saving the log as a replay, its last agent log line names the replay URL. New session in the top bar replaces the session through `POST /restart` without restarting the server.
+Start session is the table demo (capped by `MAX_HYPS`). Start recording runs H0, waits for a lens directive (`DIRECTIVE_WAIT_S`, default 90 s, then it continues on main with hypotheses flagged as a default, only while budget remains and a lens has yet to speak), and runs until Stop or `RECORD_HYPS` hypotheses (default 8), ending `END_WAIT_S` (default 15 s) after the budget is spent or both lenses have spoken and nothing runs, saving the log as a replay, its last agent log line names the replay URL. New session in the top bar replaces the session through `POST /restart` without restarting the server.
 
 Server settings: `AUTOSTART=1` (start without the UI), `MAX_HYPS` (default 1, set it empty for an uncapped session), `RECORD_HYPS` (8), `MAIN_ITERS` (2), `BRANCH_ITERS` (3), `IDLE_S` (600), `HELP_DEADLINE_S` (45). Each server start is a new session and uses the GPU. If the UI keeps showing "No agent server is reachable at /ws", the server is not running.
 
