@@ -402,10 +402,15 @@ def test_websocket_sends_history_then_streams_and_accepts_commands(tmp_path):
 
 
 def test_pivots_stop_at_three_branches_per_lens(tmp_path):
-    fp16 = {"acc": "fp16"}
-    o = make(tmp_path, Asker(h(P, 2.0, "naive"), *[h(P | fp16 | {"warps": w}, claim=f"Unlike H1, H2 and H3, {w} warps.") for w in (1, 2, 8, 16)],
-                             default="no json"), main_iters=1, branch_iters=1)
-    run_with(o, [(1, "precision", "Strict."), (1, "speed", "Faster.")])
+    class Lossy(Engine):
+        def one(self, spec):
+            p = spec.get("params") or {}
+            return met(0.6, err=5e-2, adv=5e-2) if p.get("block_m") == 128 and p.get("warps") != 4 else super().one(spec)
+
+    # each run breaks the Speed tolerance with a different single-knob change, so no proposal repeats a rejected change
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), *[h(P | {"warps": w}, claim=f"Unlike H1, H2 and H3, {w} warps.") for w in (1, 2, 8, 16)],
+                             default="no json"), engine=Lossy(), main_iters=1, branch_iters=2)
+    run_with(o, [(1, "speed", "Faster.")])
     assert [b for b in o.branches if b.startswith("speed")] == ["speed", "speed2", "speed3"]
 
 
@@ -459,7 +464,8 @@ def test_papiers_context_is_read_once_cited_and_prompted(tmp_path):
     assert len(queries) == 1
     hy = of(o, "hypothesis_proposed")[0]["hypothesis"]
     assert hy["note"] == "Context from the Papiers conversation \"Triton tutorial\"" and hy["papiers"] == "cnv_1"  # old-shape items have no kind
-    assert "Papiers cnv_1 (Triton tutorial): Accumulate in FP32 for accuracy." in o.ask.calls[0][2][1]["content"]
+    assert "Papiers item from \"Triton tutorial\": Accumulate in FP32 for accuracy." in o.ask.calls[0][2][1]["content"]
+    assert "cnv_1" not in o.ask.calls[0][2][1]["content"]
     assert_contract_papiers(o.log.events)
 
 
@@ -946,14 +952,15 @@ def test_directive_applies_while_a_model_call_is_in_flight(tmp_path):
     t.join(5)
 
 
-def test_a_duplicate_answer_is_ignored_silently_and_the_cap_reports_cut_promises(tmp_path):
+def test_a_duplicate_answer_is_ignored_silently_and_keep_tuning_promises_only_what_the_cap_allows(tmp_path):
     o = help_session(tmp_path, h(P | {"stages": 4}, 1.02), max_hyps=4)
     ans = {"type": "answer_help", "help": "hq1", "option": "tile_search", "by": "speed"}
     drive(o, [(judged(o, 1), SPEED), (asked(o), ans), (lambda: bool(of(o, "help_answered")), ans)])
     assert len(of(o, "help_answered")) == 1 and not any("Ignored an answer" in e["text"] for e in of(o, "agent_log"))
     assert "duplicate answer to hq1" in (tmp_path / "debug.log").read_text()
-    cut = [e for e in of(o, "plan_change") if "cap ended the session" in e["text"]]
-    assert cut and cut[0]["help"] == "hq1"
+    plan = [e["text"] for e in of(o, "plan_change") if e["help"] == "hq1"]
+    assert plan == ["Because the Speed lens wants more tile search, I am giving speed one more iteration. Not two, because the 4 hypothesis cap has 1 left."]
+    assert not any("cap ended the session" in e["text"] for e in of(o, "plan_change"))  # nothing promised was cut
     ev = o.log.events
     last_status = {e["branch"]: e["status"] for e in ev if e["type"] == "branch_status"}
     assert all(s not in ("running", "waiting_on_human") for s in last_status.values()) and set(last_status) == set(o.branches)
@@ -1298,9 +1305,9 @@ def test_a_retest_refusal_says_which_run_already_had_the_config(tmp_path):
     o = converged_state(tmp_path)
     o.hunch(o.branches["prec"], "Try the tanh approximate GELU.", "Hunch from the Speed lens in directive d3", "d3", "speed", {"gelu": "approx"})
     assert [e["text"] for e in of(o, "plan_change")] == [
-        ("Because the Speed lens sent \"Try the tanh approximate GELU.\", I am not testing it because that exact config, 64x64x32 tiles, 4 warps, 3 stages, "
-        "FP32 accumulation, approx GELU, already ran as H1 on prec (inconclusive). This is a retest: it was already tested in H1 (inconclusive) on 64x64x32 tiles.")]
-    assert "prec" not in o.hints and o.hunches["d3"].startswith("not run: that exact config")
+        ("Because the Speed lens sent \"Try the tanh approximate GELU.\", I am not running it again on prec because that exact config, 64x64x32 tiles, "
+         "4 warps, 3 stages, FP32 accumulation, approx GELU, already ran as H1 on prec (inconclusive).")]
+    assert "prec" not in o.hints and o.hunches["d3"] == "H1"  # the final report shows H1's outcome for the hunch
 
 
 # ---- fixes from the latest full recording ----
@@ -1388,14 +1395,19 @@ def test_duplicates_and_known_harmful_knobs_are_refused_with_a_logged_reason(tmp
     start = o.hyps[0].params
     assert o.vet(start, Params(**P | {"stages": 4}), "x").startswith("128x128x32 tiles, 4 warps, 4 stages, FP32 accumulation, exact GELU already ran as H1")
     assert o.vet(start, Params(**P | {"block_k": 64}), "x") is None  # block_k 64 was never shown to hurt
-    assert o.vet(Params(**P | {"warps": 8}), Params(**P | {"warps": 8, "stages": 4, "gelu": "approx"}), "H1 aside") is None
-    why = o.vet(start, Params(**P | {"stages": 4, "block_k": 64}), "Deeper pipelining hides latency.")
+    # H1 changed only stages 3 to 4 and was rejected, so that change is refused from any start that has stages 3, with or without a citation
+    refused = "it changes stages 3 to 4, which H1 on speed already tested on its own and was rejected (rejected, 0.92x vs its parent)"
+    assert o.vet(Params(**P | {"warps": 8}), Params(**P | {"warps": 8, "stages": 4, "gelu": "approx"}), "H1 aside").startswith(refused)
+    assert o.vet(start, Params(**P | {"stages": 4, "block_k": 64}), "Unlike H1, block_k 64 halves the loop count.").startswith(refused)
+    # from another start the same value is a different change: it may run, but only citing the run that showed it hurts
+    two = Params(**P | {"stages": 2})
+    why = o.vet(two, Params(**P | {"stages": 4, "block_k": 64}), "Deeper pipelining hides latency.")
     assert why == "the claim sets stages 4, which H1 showed hurts (rejected, 0.92x vs its parent), without citing H1; cite it and say why this case differs"
-    assert o.vet(start, Params(**P | {"stages": 4, "block_k": 64}), "Unlike H1, block_k 64 halves the loop count, so 4 stages pay off.") is None
+    assert o.vet(two, Params(**P | {"stages": 4, "block_k": 64}), "Unlike H1, block_k 64 halves the loop count, so 4 stages pay off.") is None
     o.ask = Asker(h(P | {"stages": 4, "block_k": 64}, 1.05), h(P | {"block_k": 64}, 1.05))
     o.propose(o.branches["speed"])
-    assert any(e["text"].startswith("Refused a proposal on speed: the claim sets stages 4, which H1") for e in of(o, "agent_log"))
-    assert "Invalid: the claim sets stages 4" in o.ask.calls[1][2][-1]["content"]
+    assert any(e["text"].startswith("Refused a proposal on speed: it changes stages 3 to 4, which H1") for e in of(o, "agent_log"))
+    assert "Invalid: it changes stages 3 to 4" in o.ask.calls[1][2][-1]["content"]
 
 
 def test_a_rejected_config_with_one_more_harmful_knob_is_refused(tmp_path):
@@ -1406,7 +1418,7 @@ def test_a_rejected_config_with_one_more_harmful_knob_is_refused(tmp_path):
     x.params = Params(**P | {"warps": 8})
     x.judgment = j(x.prediction, x.metrics, 0.97, BAND, 1e-3, None)
     why = o.vet(Params(**P | {"block_k": 64}), Params(**P | {"warps": 8, "stages": 4}), "Cites H1 and H2.")
-    assert why == "it is the rejected H1 with only warps 4 to 8, a change H2 already showed hurts (rejected, 0.97x vs its parent)"
+    assert why.startswith("it changes warps 4 to 8, which H2 on speed already tested on its own and was rejected")
 
 
 def test_every_rejection_gets_a_post_mortem_with_registers_spills_and_the_param_diff(tmp_path):
@@ -1435,12 +1447,16 @@ def test_claim_numbers_must_match_the_final_params():
     assert hyp.mismatches("At least 1.3x faster than 2 runs ago.", p) == []
 
 
-def test_a_claim_that_names_other_numbers_is_rebuilt_from_the_params(tmp_path):
-    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"warps": 8}, 1.05, claim="Going to 8 warps with 4 stages beats H0."), default="no json"), main_iters=2)
+def test_a_claim_that_names_other_numbers_is_re_asked_then_rebuilt_from_the_params(tmp_path):
+    wrong = h(P | {"warps": 8}, 1.05, claim="Going to 8 warps with 4 stages beats H0.")
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), wrong, wrong, wrong, default="no json"), main_iters=2)
     o.run()
+    refusals = [e["text"] for e in of(o, "agent_log") if e["text"].startswith("Refused a proposal on main: the claim does not match")]
+    assert len(refusals) == 2 and "it names 4 stages, the params do not" in refusals[0]
+    assert "Invalid: the claim does not match the change it makes (warps 4 to 8)" in o.ask.calls[2][2][-1]["content"]
     h1 = of(o, "hypothesis_proposed")[1]["hypothesis"]
     assert h1["claim"].startswith("Warps 4 to 8, giving 128x128x32 tiles, 8 warps, 3 stages") and h1["claim"].endswith(" Revisits H0.")
-    assert "4 stages" not in h1["claim"] and "the model's text named 4 stages" in h1["note"]
+    assert "4 stages" not in h1["claim"] and "after three mismatched claims, the last one said it names 4 stages" in h1["note"]
     assert hyp.mismatches(h1["claim"].split(", giving ")[1], o.hyps[1].params) == []
 
 
@@ -1556,13 +1572,14 @@ def test_claim_naming_helper():
 
 
 def test_a_pivot_claim_states_every_change_from_the_pivot_config(tmp_path):
-    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.02), h(P | {"warps": 8, "stages": 4}, 1.02, claim="Going to 8 warps should help."),
+    # prec rejects stages 3 to 4 on its own (H2), so the speed2 proposal keeps stages and changes warps and GELU
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.02), h(P | {"warps": 8, "gelu": "approx"}, 1.02, claim="Going to 8 warps should help."),
                              default="no json"), main_iters=1, branch_iters=1)
     run_with(o, [(1, "speed", "Faster."), (2, "precision", "Max error under 1e-3 on both batches.")])
     assert o.branches["speed2"].pivot.dict() == P
     h2 = next(e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["branch"] == "speed2")
     assert h2["claim"] == ("Going to 8 warps should help. Relative to the pivot config (128x128x32 tiles, 4 warps, 3 stages, FP32 accumulation, exact GELU) "
-                           "it changes warps 4 to 8, stages 3 to 4.")
+                           "it changes warps 4 to 8, gelu exact to approx.")
     prompt = next(m for _, tag, m in o.ask.calls if tag.startswith("speed2-"))[1]["content"]
     assert "This branch pivots to 128x128x32 tiles, 4 warps, 3 stages, FP32 accumulation, exact GELU." in prompt
 

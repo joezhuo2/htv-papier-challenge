@@ -41,6 +41,7 @@ DIRECTIVE_GAP_S = 10.0
 MAX_DIRECTIVES = 6
 TILE = TILE_KEYS
 SLOW = 0.5  # a run below this speedup vs its parent gets a register post-mortem
+PAPIERS_ID = re.compile(r"\b(?:cnv|hl|nte|doc|psg|pas)_[0-9a-f]{8,}\b")
 
 
 @dataclass
@@ -140,9 +141,12 @@ def change(a: Params, b: Params):
     return ", ".join(diff) or "no parameter change"
 
 
-def setting(p: Params, k):
-    v = getattr(p, k)
+def value_text(k, v):
     return f"{v.upper()} accumulation" if k == "acc" else f"{v} GELU" if k == "gelu" else f"{k} {v}"
+
+
+def setting(p: Params, k):
+    return value_text(k, getattr(p, k))
 
 
 def pivot_keys(p: Params, base: Params):
@@ -197,8 +201,9 @@ KNOB_EFFECT = {
 }
 
 
-def miss_cause(p: Params, base: Params, m: Metrics, parent: Metrics, speedup, pred, ref):
-    """Templated post-mortem for a speed miss: the likely cause from registers, spills and the parameter diff."""
+def miss_cause(p: Params, base: Params, m: Metrics, parent: Metrics, speedup, pred, ref, noise=None):
+    """Templated post-mortem for a speed miss: the likely cause from registers, spills and the parameter diff. noise is the decision
+    band of an inconclusive run, whose speedup sits inside it."""
     vs = "naive" if ref == "naive" else "its parent"
     regs = (f"{parent.n_regs} to {m.n_regs} registers and {parent.n_spills} to {m.n_spills} spilled words per thread"
             if m.n_regs is not None and parent.n_regs is not None else
@@ -219,8 +224,15 @@ def miss_cause(p: Params, base: Params, m: Metrics, parent: Metrics, speedup, pr
         why = (f"registers and spills barely moved, so the change itself is the likely cause: {'; '.join(effects)}" if effects
                else f"registers and spills barely moved, so {change(base, p)} itself is the likely cause")
         pivot = f"Revert {change(base, p)} and change a knob the ledger has not tried yet."
-    gain = (f"It ran at {speedup:.2f}x vs {vs}, faster but short of the predicted {pred['min_speedup']:.2f}x, so the change helps less than claimed"
-            if speedup >= 1 else f"It ran at {speedup:.2f}x vs {vs}, slower than what it was timed against")
+    if noise is not None:
+        gain = (f"It ran at {speedup:.2f}x vs {vs}, inside the +/- {noise * 100:.1f}% noise band around the predicted {pred['min_speedup']:.2f}x, "
+                "so this run cannot tell whether the change clears the prediction")
+        if not (m.n_spills and m.n_spills > (parent.n_spills or 0)) and per <= limit:
+            pivot = f"Rerun {change(base, p)} with more timing rounds, or keep the parent and change a knob the ledger has not tried yet."
+    elif speedup >= 1:
+        gain = f"It ran at {speedup:.2f}x vs {vs}, faster but short of the predicted {pred['min_speedup']:.2f}x, so the change helps less than claimed"
+    else:
+        gain = f"It ran at {speedup:.2f}x vs {vs}, slower than what it was timed against"
     return {"cause": f"{gain}. Changed {change(base, p)} ({regs}). Likely cause: {why}.", "pivot": pivot}
 
 
@@ -312,7 +324,9 @@ class Orchestrator:
         self.conflicts = 0
         self.hybrid: dict | None = None  # {branches, params, base, text, t, state: proposed, approved, expired, done}
         self.skipped = ""  # the last logged reason no hybrid could be proposed
+        self.unmerged = ""  # why no run qualified for a hybrid so far, logged at the end if none was proposed
         self.hunches: dict[str, str] = {}  # directive or help id of a concrete hunch -> the hypothesis that tested it, or "not run: <why>"
+        self.taken: Hint | None = None  # the hint the current proposal used, restored if its branch is rejected before the run
         self.reserved: set[str] = set()  # slots past the cap: directive ids of hunches still to test, and "hybrid" once approved
         self.lock = threading.RLock()
         self.gpu = threading.Lock()
@@ -482,6 +496,8 @@ class Orchestrator:
             if open_help(x):
                 x["expired"] = True
                 self.log.emit("plan_change", help=hid, text=f"Session ended with {hid} unanswered: {why}, so {x['branch']} gets no more iterations.")
+        if not self.hybrid and self.unmerged:
+            self.log.emit("agent_log", text=self.unmerged)
         if self.hybrid and self.hybrid["state"] == "proposed":
             self.log.emit("agent_log", text=f"Session ended with the hybrid of {' and '.join(self.hybrid['branches'])} unapproved: {why}.")
         for pr in self.promises:
@@ -607,6 +623,9 @@ class Orchestrator:
     def bound_only(self, b, d):
         """A directive that names no concrete change is a constraint: the next hypothesis is attributed to its bound, not called a hunch."""
         if self.capped() or self.stopped:
+            why = "the session was stopped" if self.stopped else f"the session reached its {self.max_hyps} hypothesis cap"
+            self.log.emit("plan_change", help=d["id"], text=f"{d['id']} sets a bound, not a specific change. No new hypotheses run on {b.id} because {why}, "
+                                                           "so the bound applies to the logged runs only.")
             return
         lens = d["lens"].capitalize()
         self.hints.setdefault(b.id, Hint(d["text"], f"Tested under the {lens} lens bound set by {d['id']}", d["id"], None))
@@ -625,23 +644,36 @@ class Orchestrator:
         return hits[-1] if hits else None
 
     def plan(self, b, delta):
-        """(params, earlier, why_not) for a concrete hunch on b: its change applied to b's current best params, built in code. earlier is
-        the run that tested the change before, why_not says why it cannot run."""
+        """(params, earlier, why_not, dup) for a concrete hunch on b: its change applied to b's current best params, built in code. earlier is
+        the run that tested the change before, why_not says why it cannot run. dup is the hypothesis that already has that exact config
+        (finished or being measured), or True when it is queued, so not even the model may run it."""
         start = self.start_point(b.id)[0]
         e = self.tested(delta)
         try:
             p = fit_stages(replace(start, **delta))
         except ValueError as err:
-            return None, e, f"it names an invalid value ({err})"
+            return None, e, f"it names an invalid value ({err})", None
         if acc_per_thread(p) > ACC_LIMIT[p.acc]:
             return None, e, (f"on {b.id}'s current best it gives {params_text(p)}, which puts {acc_per_thread(p)} accumulator elements on each thread, "
-                             f"over the {ACC_LIMIT[p.acc]} register limit")
+                             f"over the {ACC_LIMIT[p.acc]} register limit"), None
         if p == start:
-            return None, e, f"{b.id}'s current best, {params_text(start)}, already has it"
-        ran = next((x for x in self.hyps if x.params == p), None)
-        if ran:
-            return None, e, f"that exact config, {params_text(p)}, already ran as {ran.id} on {ran.branch} ({ran.judgment.verdict if ran.judgment else 'running'})"
-        return p, e, None
+            return None, e, f"{b.id}'s current best, {params_text(start)}, already has it", None
+        dup, why = self.duplicate(p)
+        return (None, e, why, dup) if dup else (p, e, None, None)
+
+    def duplicate(self, p):
+        """(match, why) when the exact config p, accumulation and GELU included, already ran, is being measured, or is queued as a
+        hunch or the hybrid. match is the hypothesis, or True for a queued one. (None, None) when p is new."""
+        x = next((x for x in self.hyps if x.params == p), None)
+        if x:
+            return x, (f"that exact config, {params_text(p)}, already ran as {x.id} on {x.branch} ({self.outcome(x)})" if x.judgment
+                       else f"that exact config, {params_text(p)}, is being measured right now as {x.id} on {x.branch}")
+        q = next((bid for bid, hint in self.hints.items() if hint.params == p), None)
+        if q:
+            return True, f"that exact config, {params_text(p)}, is already queued on {q} for {self.hints[q].ref}"
+        if self.hybrid and self.hybrid["state"] in ("proposed", "approved") and self.hybrid["params"] == p:
+            return True, f"that exact config, {params_text(p)}, is the pending hybrid of {' and '.join(self.hybrid['branches'])}"
+        return None, None
 
     def hunch(self, b, text, cite, ref, lens, delta):
         """A typed hunch gets exactly one plan_change, when it arrives: whether it is a retest, and either what will run (built in code on
@@ -650,7 +682,15 @@ class Orchestrator:
         if self.stopped:
             self.log.emit("plan_change", help=ref, text=f"{quoted}, nothing is tested: the session was stopped.")
             return
-        p, e, why = self.plan(b, delta) if delta else (None, None, None)
+        p, e, why, dup = self.plan(b, delta) if delta else (None, None, None, None)
+        if dup:
+            # the exact config is already logged or on its way, so the hunch's outcome is that run's
+            if isinstance(dup, Hyp):
+                self.hunches[ref] = dup.id
+            else:
+                self.hunches[ref] = f"not run: {why}"
+            self.log.emit("plan_change", help=ref, text=f"{quoted}, I am not running it again on {b.id} because {why}.")
+            return
         if not e:
             p, why = None, None  # a first test goes to the model, which can fit the rest of the config around the change
         sp = e and (f", {e.speedup:.2f}x vs {'naive' if e.ref == 'naive' else 'its parent'}" if e.speedup else "")
@@ -794,6 +834,10 @@ class Orchestrator:
             self.close(b, "done")
             return
         self.cite(h, self.start_point(b.id)[0])
+        if b.status == "rejected":
+            self.drop(h, b)
+            return
+        h.claim, h.note = self.scrub(h.claim), h.note and self.scrub(h.note)
         if b.id in self.defaulted:
             flag = "flagged: default continuation, no lens directive arrived"
             h.note = f"{h.note} ({flag})" if h.note else flag.capitalize()
@@ -829,7 +873,7 @@ class Orchestrator:
             self.export_failure(h, b)
             self.pivot(h)
             return
-        if v == "rejected" and h.id not in self.pms:
+        if v in ("rejected", "inconclusive") and h.id not in self.pms:
             self.post_mortem(h)
 
         b.misses = 0 if v == "confirmed" else b.misses + 1
@@ -862,6 +906,20 @@ class Orchestrator:
         if done:
             self.close(b, "done")
         self.maybe_hybrid()
+
+    def drop(self, h, b):
+        """A proposal whose branch was rejected while Papiers was read never runs. Its hint and reserved slot go back, and
+        rehome_hints moves the hint to the lens's open branch."""
+        hint, self.taken = self.taken, None
+        if hint:
+            self.hints.setdefault(b.id, hint)
+            if h.bonus:
+                self.reserved.add(hint.ref)
+            if self.hunches.get(hint.ref) == h.id:
+                del self.hunches[hint.ref]
+        succ = self.successor(b)
+        self.log.emit("agent_log", text=f"{b.id} was rejected while its next hypothesis was being prepared, so it is not run"
+                                        + (f" and {succ.id} continues the lens." if succ else "."))
 
     # ---- help requests ----
 
@@ -941,13 +999,16 @@ class Orchestrator:
                        {"id": "other", "label": "Suggest something else"}]
         if live is not b:
             question += f" {b.id} was rejected while {h.id} ran, so an answer applies to {live.id}, which keeps running meanwhile."
+        n, short = self.room()
         req = {
             "id": hid, "target": target,
             "question": question,
             "evidence": evidence,
             "options": options,
             "default": "tile_search", "blocks": live.id, "deadline_s": int(self.help_deadline_s),
-            "what_changes": "Keep tuning adds two more iterations on this branch, accept closes it, and a suggestion becomes the next hypothesis to test.",
+            "what_changes": (f"Keep tuning adds {'two more iterations' if n == 2 else 'one more iteration'} on this branch, accept closes it, and a "
+                             "suggestion becomes the next hypothesis to test." if n else
+                             f"No answer can add iterations because {short}, so this branch closes after any answer, which is recorded."),
         }
         self.helps[hid] = {"help": req, "branch": live.id, "t": self.log.clock(), "answered": False, "expired": False, "cancelled": False,
                            "lineage": lineage, "failed": failed}
@@ -973,9 +1034,15 @@ class Orchestrator:
             b = self.live(x["branch"])
             if b is None:
                 continue
-            self.promise(hid, b, 2)
-            self.log.emit("plan_change", help=hid, text=f"No answer to {hid} by the deadline, so I am proceeding on the default assumption: keep tuning tiles and warps on {b.id}. "
-                                                        "Results on this branch are flagged assumption pending until an answer arrives.")
+            n, short = self.room()
+            if n == 0:
+                self.log.emit("plan_change", help=hid, text=f"No answer to {hid} by the deadline, and {short}, so no iterations fit and I am closing {b.id}.")
+                self.close(b, "done")
+                continue
+            self.promise(hid, b, n)
+            self.log.emit("plan_change", help=hid, text=f"No answer to {hid} by the deadline, so I am proceeding on the default assumption: keep tuning tiles and warps on {b.id}"
+                                                        + (f" for one more iteration, not two, because {short}. " if short else ". ")
+                                                        + "Results on this branch are flagged assumption pending until an answer arrives.")
             self.reopen(b)
 
     def promised(self, bid):
@@ -985,6 +1052,17 @@ class Orchestrator:
     def promise(self, ref, b, n):
         self.extra[b.id] = self.extra.get(b.id, 0) + n
         self.promises.append({"ref": ref, "branch": b.id, "n": n, "start": sum(h.branch == b.id for h in self.hyps)})
+
+    def room(self, want=2):
+        """(iterations a help answer can promise, up to want, why fewer). The cap minus hypotheses counted against it and iterations
+        already promised on any branch; want when the session is uncapped."""
+        if self.max_hyps is None:
+            return want, ""
+        used = sum(not h.bonus for h in self.hyps)
+        owed = sum(self.promised(bid) for bid in {pr["branch"] for pr in self.promises})
+        n = max(0, min(want, self.max_hyps - used - owed))
+        why = (f"the {self.max_hyps} hypothesis cap has {self.max_hyps - used} left" + (f" and {owed} of those are already promised" if owed else ""))
+        return n, why if n < want else ""
 
     def answer(self, cmd):
         x = self.helps.get(cmd["help"])
@@ -1015,23 +1093,39 @@ class Orchestrator:
             if b.status in ("running", "waiting_on_human"):
                 self.close(b, "done")
         else:
-            if cmd["option"] == "other" and note:
+            other = cmd["option"] == "other" and note
+            # a late answer revises the iterations the deadline default already promised, it adds none
+            if x["expired"]:
+                n = next((pr["n"] for pr in self.promises if pr["ref"] == cmd["help"]), 0)
+                short = "" if n == 2 else "the deadline default found no room" if n == 0 else "the deadline default promised only one"
+            else:
+                n, short = self.room()
+            if n == 0:
+                text = (f"{late}The {lens} lens wants {'its suggestion tested' if other else 'more tile search'} on {b.id}, but {short}, so no iterations fit "
+                        f"and I am closing {b.id} with its best configuration.")
+                self.log.emit("plan_change", help=cmd["help"], text=text)
+                self.close(b, "done")
+                self.export_answer(x["help"], cmd, text)
+                return
+            more = "two more iterations" if n == 2 else "one more iteration"
+            fewer = f" Not two, because {short}." if short else ""
+            if other:
                 delta = hyp.hunch_change(note) or {}
-                p, e, why = self.plan(b, delta) if delta else (None, None, None)
-                if not e:
+                p, e, why, dup = self.plan(b, delta) if delta else (None, None, None, None)
+                if not e and not dup:
                     p, why = None, None
                 cite = f"Suggested by the {lens} lens in answer to {cmd['help']}"
                 self.hints[b.id] = Hint(note, f"{cite}, a retest of {e.id} on the current best tiles" if e else cite, cmd["help"], delta, p, e,
                                         self.start_point(b.id)[0])
                 text = (f"{late}Because the {lens} lens suggests \"{note}\", I am testing that next on {b.id} instead of more tile search, still under the active error bound."
                         + (f" It was already tested in {e.id} ({e.judgment.verdict}), so this is a retest on the current best tiles." if e else "")
-                        + (f" As a fixed change it cannot run ({why}), so the agent picks the closest valid version." if why else ""))
+                        + (f" As a fixed change it cannot run ({why}), so the agent picks the closest valid version." if why else "") + fewer)
                 if why:
                     self.hints[b.id].params = None
             else:
-                text = f"{late}Because the {lens} lens wants more tile search, I am giving {b.id} two more iterations."
+                text = f"{late}Because the {lens} lens wants more tile search, I am giving {b.id} {more}.{fewer}"
             if not x["expired"]:
-                self.promise(cmd["help"], b, 2)
+                self.promise(cmd["help"], b, n)
             self.log.emit("plan_change", help=cmd["help"], text=text)
             self.reopen(b)
         self.export_answer(x["help"], cmd, text)
@@ -1081,13 +1175,14 @@ class Orchestrator:
     def propose(self, b: Branch):
         start, metrics = self.start_point(b.id)
         tried_all = {json.dumps(h.params.dict(), sort_keys=True) for h in self.hyps}
+        self.taken = None
         if b.id == "merge" and self.hybrid and self.hybrid["state"] == "approved":
             return self.hybrid_hyp(b)
         # the seeded FP16 variant is the first Speed lens hypothesis, ahead of a pending hunch
         seed = None if self.base_capped() else self.seed(b, tried_all)
         if seed:
             return seed
-        hint = self.hints.pop(b.id, None)
+        hint = self.taken = self.hints.pop(b.id, None)
         if hint and hint.params:
             built = self.built(b, hint)
             if built:
@@ -1101,28 +1196,40 @@ class Orchestrator:
                               ([f"Suggestion from a human lens owner, test this next: {hint.text}"] if hint and hint.delta is not None else [])
                               + ([f"This branch pivots to {params_text(b.pivot)}. Keep those parameters unless your claim names every one you change."]
                                  if b.pivot else [])
-                              + [f"Papiers {n['id']} ({n['title']}): {n['excerpt']}" for n in notes], self.bounds(b.lens)["standard"], self.headroom)
+                              + [f"Papiers {n.get('kind') or 'item'} from \"{n.get('document_title') or n['title']}\": {n['excerpt']}" for n in notes],
+                              self.bounds(b.lens)["standard"], self.headroom,
+                              [f"{k} {a} to {v} ({x.id}, {self.outcome(x)})" for (k, a, v), x in self.rejected_deltas().items()])
         why, first = "", ""
         for attempt in range(3):
             text = self.ask_or_wait(messages, f"{b.id}-{b.iters}-{attempt}", b.id)
-            if text is None:
+            if text is None or b.status == "rejected":
+                # a re-judge can reject b while the model answers: the hint goes back and moves to the lens's open branch
                 if hint:
                     self.hints[b.id] = hint
+                self.taken = None
+                if text is not None:
+                    self.log.emit("agent_log", text=f"{b.id} was rejected while its next hypothesis was being proposed, so nothing more runs on it.")
                 return None
             h, why = hyp.parse(text)
             refused = h and self.vet(start, h["params"], h["claim"])
+            missing = hint and hint.delta and h and not h["adjusted"] and [value_text(k, v) for k, v in hint.delta.items() if getattr(h["params"], k) != v]
+            if missing and not refused:
+                refused = f"the lens asked to test {', '.join(missing)}, which this proposal does not set"
+            # a claim that misdescribes the change is sent back, on the last attempt it is rebuilt from the params instead
+            wrong = h and not refused and not h["adjusted"] and hyp.claim_errors(h["claim"], start, h["params"])
+            if wrong and attempt < 2:
+                refused = f"the claim does not match the change it makes ({change(start, h['params'])}): {'; '.join(wrong)}"
             if refused:
                 h, why = None, refused
                 self.log.emit("agent_log", text=f"Refused a proposal on {b.id}: {why}.")
             if h:
                 cite = hint.cite if hint else None
                 claim = h["claim"]
-                wrong = hyp.mismatches(claim, h["params"])
                 if h["adjusted"] or wrong:
                     # rebuilt from the params that run, keeping any run ids the model cited
                     cited = list(dict.fromkeys(re.findall(r"\bH\d+\b", claim)))
                     claim = claim_text(start, h["params"], h["prediction"], self.bounds(b.lens)) + (f" Revisits {', '.join(cited)}." if cited else "")
-                    fix = h["adjusted"] or f"Claim rebuilt from the final params, the model's text named {', '.join(wrong)}"
+                    fix = h["adjusted"] or f"Claim rebuilt from the final params after three mismatched claims, the last one said {'; '.join(wrong)}"
                     cite = f"{cite}. {fix}" if cite else fix
                 if b.pivot and any(not hyp.named(claim, k, getattr(h["params"], k)) for k in h["params"].dict()
                                    if getattr(h["params"], k) != getattr(b.pivot, k)):
@@ -1137,6 +1244,17 @@ class Orchestrator:
                 return new
             first = first or why
             messages = messages + [{"role": "assistant", "content": text}, {"role": "user", "content": f"Invalid: {why}. Reply again with only the JSON object."}]
+        p = hint and hint.delta and self.plan(b, hint.delta)[0]
+        if p:
+            # the model kept ignoring the hunch, so its change is built in code on the branch's best config
+            pred = {"min_speedup": 1.02, "vs": "parent_best"}
+            new = self.new_hyp(b, claim_text(start, p, pred, self.bounds(b.lens)), pred, p,
+                               f"{hint.cite}. Built in code: the model's proposals did not set {', '.join(value_text(k, v) for k, v in hint.delta.items())}")
+            self.spend(new, hint)
+            self.hunches[hint.ref] = new.id
+            self.log.emit("agent_log", text=f"The model did not turn \"{hint.text[:120]}\" ({hint.ref}) into a valid proposal ({why}), so {new.id} tests it as "
+                                            f"built in code: {change(start, p)}.")
+            return new
         if hint:
             self.reserved.discard(hint.ref)
         if hint and hint.delta is not None:
@@ -1171,12 +1289,27 @@ class Orchestrator:
                 out[(keys[0], getattr(h.params, keys[0]))] = h
         return out
 
+    def rejected_deltas(self):
+        """{(knob, from, to): hypothesis} for every rejected run that changed exactly one knob from what it was timed against, on any
+        branch. A proposal that makes one of these changes again, alone or with others, is refused."""
+        out = {}
+        for h in self.hyps:
+            if h.judgment and h.judgment.verdict == "rejected" and len(ks := self.knobs(h)) == 1:
+                out.setdefault((ks[0], getattr(self.baseline(h)[0], ks[0]), getattr(h.params, ks[0])), h)
+        return out
+
     def vet(self, start: Params, p: Params, claim):
-        """Why a proposal is refused before it runs, or None: an exact repeat, a rejected config with one more knob that already hurt,
-        or a claim that sets a knob to a value shown to hurt without citing the run that showed it."""
+        """Why a proposal is refused before it runs, or None: an exact repeat, a change already rejected on its own, a rejected config with
+        one more knob that already hurt, or a claim that sets a knob to a value shown to hurt without citing the run that showed it."""
         ran = next((x for x in self.hyps if x.params == p), None)
         if ran:
             return f"{params_text(p)} already ran as {ran.id} on {ran.branch} ({self.outcome(ran) if ran.judgment else 'running'})"
+        deltas = self.rejected_deltas()
+        for k in p.dict():
+            e = deltas.get((k, getattr(start, k), getattr(p, k)))
+            if e:
+                return (f"it changes {k} {getattr(start, k)} to {getattr(p, k)}, which {e.id} on {e.branch} already tested on its own and was rejected "
+                        f"({self.outcome(e)}); that change is refused on every branch")
         hurt = self.hurts()
         for x in self.hyps:
             if not (x.judgment and x.judgment.verdict == "rejected"):
@@ -1250,34 +1383,72 @@ class Orchestrator:
         base = self.baseline(h)[0]
         return [k for k in h.params.dict() if getattr(h.params, k) != getattr(base, k)]
 
+    def gain(self, h):
+        """h's speedup over what it was timed against: the same-window parent ratio, or its baseline's latency over its own."""
+        p, m = self.baseline(h)
+        return h.speedup if h.speedup is not None and (h.ref == "parent" or p == NAIVE) else m.latency_ms / h.metrics.latency_ms
+
+    def failed_bound(self, h):
+        """The first active bound h's measured errors break, as text, or None. Every lens's bound counts, so a hybrid never inherits
+        a change that only a looser lens accepted."""
+        m = h.metrics
+        for lens in ("speed", "precision", "both"):
+            b = self.bounds(lens)
+            if m.max_error >= b["standard"]:
+                return f"standard error {sci(m.max_error)} is over the {bound_owner(b)} bound {sci(b['standard'])}"
+            if b["adversarial"] is not None and m.adv_error >= b["adversarial"]:
+                return f"adversarial error {sci(m.adv_error)} is over the {bound_owner(b)} bound {sci(b['adversarial'])}"
+        return None
+
+    def merge_why_not(self, h):
+        """Why h's change cannot go into a hybrid, or None: it must have measured at least 1.00x over its parent and pass every active bound."""
+        if not (h.metrics and h.metrics.latency_ms):
+            return "it did not run"
+        return (f"{self.gain(h):.2f}x vs its parent, under 1.00x" if self.gain(h) < 1.0 else self.failed_bound(h))
+
+    def skip_hybrid(self, text):
+        if text != self.skipped:  # logged once per distinct reason, since this runs after every iteration
+            self.skipped = text
+            self.log.emit("agent_log", text=text)
+
     def maybe_hybrid(self):
-        """Proposes, once, the best confirmed config combined with the best confirmed single-knob change from any other branch (the
-        largest measured gain over its parent). It does not need the lenses to disagree: once every branch shares a bound, the
-        question is whether two confirmed improvements add up. Skipped, with the reason logged once, when the accumulator guard
-        fails or the combination already ran. Approval is the presenter's, and neither the proposal nor its run counts toward the cap."""
+        """Proposes, once, the best confirmed config combined with the change one run on another branch made from its parent (the largest
+        measured gain over its parent). Only a run at 1.00x or better over its parent that passes every active bound can give its change,
+        and the best config has to pass them too. It does not need the lenses to disagree: once every branch shares a bound, the question
+        is whether two improvements add up. Skipped, with the reason logged once, when nothing qualifies, the accumulator guard fails, or
+        the combination already ran. Approval is the presenter's, and neither the proposal nor its run counts toward the cap."""
         best = self.best_run()
         if self.hybrid or not best:
             return
-        donors = [h for h in self.hyps if h.branch != best.branch and h.judgment and h.judgment.verdict == "confirmed" and not h.judgment.provisional
-                  and h.ref == "parent" and len(ks := self.knobs(h)) == 1 and getattr(best.params, ks[0]) != getattr(h.params, ks[0])]
-        if not donors:
+        own = self.lineage(best.branch)
+        others = [h for h in self.hyps if h.judgment and h.branch not in own and h.branch != "merge" and self.knobs(h)
+                  and any(getattr(best.params, k) != getattr(h.params, k) for k in self.knobs(h))]
+        if not others:
             return
-        donor = max(donors, key=lambda h: h.speedup)
-        k = self.knobs(donor)[0]
-        p = fit_stages(replace(best.params, **{k: getattr(donor.params, k)}))
+        if why := self.merge_why_not(best):
+            self.skip_hybrid(f"No hybrid: the best config, {best.id} on {best.branch}, does not qualify ({why}).")
+            return
+        donors = [h for h in others if not self.merge_why_not(h)]
+        if not donors:
+            # a later run may still qualify, so the reason is logged when the session ends without a hybrid
+            self.unmerged = ("No hybrid: no run on another branch measured at least 1.00x over its parent while passing every active bound ("
+                             + "; ".join(f"{h.id} on {h.branch}, {change(self.baseline(h)[0], h.params)}: {self.merge_why_not(h)}" for h in others) + ").")
+            return
+        self.unmerged = ""
+        donor = max(donors, key=self.gain)
+        ks = self.knobs(donor)
+        p = fit_stages(replace(best.params, **{k: getattr(donor.params, k) for k in ks}))
         per, limit = acc_per_thread(p), ACC_LIMIT[p.acc]
         ran = next((x for x in self.hyps if x.params == p), None)
-        pair = f"{best.id} on {best.branch} ({params_text(best.params)}) with {setting(donor.params, k)} from {donor.id} on {donor.branch}"
+        pair = (f"{best.id} on {best.branch} ({params_text(best.params)}) with {', '.join(setting(donor.params, k) for k in ks)} "
+                f"from {donor.id} on {donor.branch}")
         why = (f"{params_text(p)} puts {per} {p.acc.upper()} accumulator elements on each of {p.warps * 32} threads, over {limit}" if per > limit
                else f"{params_text(p)} already ran as {ran.id} on {ran.branch}" if ran else None)
         if why:
-            text = f"No hybrid of {pair}: {why}."
-            if text != self.skipped:  # logged once per distinct reason, since this runs after every iteration
-                self.skipped = text
-                self.log.emit("agent_log", text=text)
+            self.skip_hybrid(f"No hybrid of {pair}: {why}.")
             return
-        text = (f"Combine the best confirmed config, {pair}, the best confirmed single-knob change on another branch "
-                f"({donor.speedup:.2f}x over its parent). Candidate: {params_text(p)}, {per} accumulator elements per thread. "
+        text = (f"Combine the best confirmed config, {pair}, the largest gain on another branch that passes every active bound "
+                f"({self.gain(donor):.2f}x over its parent). Candidate: {params_text(p)}, {per} accumulator elements per thread. "
                 "It runs outside the hypothesis cap, and the result shows whether the two changes add up.")
         self.hybrid = {"branches": [best.branch, donor.branch], "params": p, "base": best.params, "faster": best, "text": text,
                        "t": self.log.clock(), "state": "proposed"}
@@ -1327,6 +1498,11 @@ class Orchestrator:
             for n in self.read[query]:
                 self.log.emit("papiers_context", query=query, note={k: v for k, v in n.items() if v is not None})
         return self.read[query]
+
+    def scrub(self, text):
+        """Replaces raw Papiers ids (cnv_..., hl_...) a model echoed into prose with the item's document title."""
+        titles = {n["id"]: n.get("document_title") or n["title"] for got in self.read.values() for n in got}
+        return PAPIERS_ID.sub(lambda m: f"\"{titles[m.group(0)]}\"" if m.group(0) in titles else "a Papiers item", text)
 
     def cite(self, h: Hyp, start: Params):
         """Before the run: reads Papiers for the change this hypothesis makes and cites the top item in its note. Nothing is cited when
@@ -1440,7 +1616,7 @@ class Orchestrator:
             vs = "naive" if h.ref == "naive" else "the parent"
             pm = {"hypothesis": h.id, "expected": expected, "sweep": [],
                   "observed": f"{h.speedup:.2f}x vs {vs} (+/- {h.speedup * h.noise:.2f}x) at {m.latency_ms:.3f} ms, standard error {sci(m.max_error)}."} \
-                | miss_cause(h.params, bp, m, bm, h.speedup, h.prediction, h.ref)
+                | miss_cause(h.params, bp, m, bm, h.speedup, h.prediction, h.ref, h.noise if h.judgment.verdict == "inconclusive" else None)
         else:
             observed = f"Speedup of {h.speedup:.2f}x (+/- {h.speedup * h.noise:.2f}x), standard error {sci(m.max_error)}, adversarial error {sci(m.adv_error)}."
             s = Metrics() if self.stopped else self.gpu_run({"target": "sweep", "params": h.params.dict(), "ks": SWEEP_KS}, f"{self.session}/{h.id}-sweep")
@@ -1450,7 +1626,7 @@ class Orchestrator:
             # the query names the measured cause: an error that grows with K is an accumulation length effect
             rising = len(sweep) > 1 and sweep[-1]["adv_error"] > sweep[0]["adv_error"]
             found = self.papiers("accumulation error grows with length" if rising else facet(base, h.params))
-            context = "".join(f"\nThe user's Papiers {n.get('kind') or 'note'} {n['id']} from \"{n.get('document_title') or n['title']}\": {n['excerpt'][:300]}"
+            context = "".join(f"\nThe user's Papiers {n.get('kind') or 'note'} from \"{n.get('document_title') or n['title']}\": {n['excerpt'][:300]}"
                               + (f" (their note: {n['annotation']})" if n.get("annotation") else "") for n in found)
             fallback = {"cause": f"{h.judgment.reason} {trend}".strip(),
                         "pivot": f"Drop {ruled_out(h.params, base)}, keep the other parameters, and test whether the gain survives."}
@@ -1462,7 +1638,9 @@ class Orchestrator:
         note = self.best_note(found + self.papiers(facet(self.baseline(h)[0], h.params)), f"{pm['cause']} {pm['pivot']}")
         if note:
             pm["note"] = note["id"]
-        self.avoid.append(f"{ruled_out(h.params, base)} ({h.id} rejected: {h.judgment.reason})")
+        pm["cause"], pm["pivot"] = self.scrub(pm["cause"]), self.scrub(pm["pivot"])
+        if h.judgment.verdict == "rejected":
+            self.avoid.append(f"{ruled_out(h.params, base)} ({h.id} rejected: {h.judgment.reason})")
         self.pms[h.id] = pm
         self.log.emit("post_mortem", post_mortem=pm)
 

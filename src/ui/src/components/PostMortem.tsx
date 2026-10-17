@@ -32,6 +32,7 @@ function Sweep({ sweep }: { sweep: PostMortem['sweep'] }) {
 
 export function PostMortemCard({ view, pm, open, onToggle }: { view: View; pm: PostMortem; open: boolean; onToggle: (open: boolean) => void }) {
   const worst = pm.sweep.length ? Math.max(...pm.sweep.map(s => s.adv_error)) : undefined
+  const verdict = view.verdicts[pm.hypothesis]?.verdict === 'inconclusive' ? 'inconclusive' : 'rejected'
   return (
     <details
       className="card focus" open={open} id={`pm-${pm.hypothesis}`} data-testid={`postmortem-${pm.hypothesis}`}
@@ -39,7 +40,7 @@ export function PostMortemCard({ view, pm, open, onToggle }: { view: View; pm: P
     >
       <summary className="row" style={{ cursor: 'pointer' }}>
         <h3>Post-mortem <span className="mono">{pm.hypothesis}</span></h3>
-        <span className="verdict rejected">rejected</span>
+        <span className={`verdict ${verdict}`}>{verdict}</span>
         {worst ? <span className="small muted">worst adversarial {sci(worst)}</span> : null}
       </summary>
       <div className="stack" style={{ paddingTop: 6 }}>

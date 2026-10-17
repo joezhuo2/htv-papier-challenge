@@ -49,3 +49,11 @@
 26. `hybrid_proposed` no longer needs a `conflict_detected` first: it combines the best confirmed run with the best confirmed single-knob change from another branch, and can arrive at the cap, where the session waits for approval or the deadline.
 27. `Hypothesis` gains optional `papiers`, the id of the Papiers item its note cites; the note names the document instead of the id. Older logs keep the id in the note.
 28. `session_finished.best` and `final_report.best` give vs naive and vs eager as the session baselines' latency over the best run's latency (the best is the fastest confirmed run), not its same-window ratios.
+
+## Changes made after the 14:38 recording
+
+29. Every inconclusive verdict also gets a `post_mortem` (empty sweep). The UI badge on a post-mortem card shows the hypothesis's verdict, `rejected` or `inconclusive`.
+30. A directive whose concrete change gives an exact config that already ran, is being measured or is queued gets one `plan_change` naming that run ("I am not running it again on speed2 because that exact config ... is being measured right now as H2 on speed"), and `final_report.hunches[].outcome` is that run's result. A constraint-only directive at the cap or after Stop gets one `plan_change` saying the bound applies to the logged runs only.
+31. A help answer, or the deadline default, promises at most what the hypothesis cap leaves after iterations already promised. When none fit, its `plan_change` says so and the branch closes. `help_requested.what_changes` states the same number.
+32. `hybrid_proposed` merges only the changes of a run at 1.00x or better over its parent that passes every active bound, and the best config has to pass them too. When no run qualifies, an `agent_log` line before `final_report` lists each candidate and why it did not qualify.
+33. `papiers_context.note.document_title` for a conversation is the library document whose title shares the most words with it (at least two), otherwise the conversation's own title. Hypothesis claims, notes and post-mortem prose never contain raw Papiers ids.

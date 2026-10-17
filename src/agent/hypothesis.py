@@ -49,8 +49,8 @@ def headroom_line(h):
             f"({e['min']:.2f} to {e['max']:.2f}). Keep predictions physically plausible against this.")
 
 
-def prompt(branch, directives, start, ledger, avoid, notes=(), bound=1e-3, headroom=None):
-    """ledger: every run this session on any branch, as rows from Orchestrator.ledger()."""
+def prompt(branch, directives, start, ledger, avoid, notes=(), bound=1e-3, headroom=None, refused=()):
+    """ledger: every run this session on any branch, as rows from Orchestrator.ledger(). refused: rejected single-knob changes."""
     lines = [
         f"Branch: {branch['id']} ({branch['label']}).",
         f"Error bound on this branch, set by its lens: max_error under {bound:.0e} on the standard batch. Use it as prediction.max_error.",
@@ -62,6 +62,9 @@ def prompt(branch, directives, start, ledger, avoid, notes=(), bound=1e-3, headr
         lines.append(headroom_line(headroom))
     if avoid:
         lines.append("Ruled out by earlier post-mortems, do not repeat: " + "; ".join(avoid))
+    if refused:
+        lines.append("Single-knob changes already rejected this session. A proposal that makes any of them, alone or with other changes, "
+                     "is refused on every branch: " + "; ".join(refused))
     lines += [f"Context note: {n}" for n in notes]
     lines.append('Propose the next hypothesis. Use "vs": "parent_best" unless this is the first change from the naive kernel.')
     return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": "\n".join(lines)}]
@@ -129,6 +132,46 @@ def mismatches(claim, p):
     for k, rx in KNOB_RE.items():
         bad += [m.group(0) for m in rx.finditer(t) if int(next(g for g in m.groups() if g)) != getattr(p, k)]
     return bad
+
+
+UP, DOWN = r"increas|rais|grow|doubl|bump|widen|deepen", r"decreas|reduc|lower|halv|shrink|cut|narrow"
+CHANGE_RE = re.compile(rf"\b({UP}|{DOWN}|switch|chang|mov|set)\w*\s+(?:the\s+)?(?:num_)?(block_[mnk]|warps|stages)\b"
+                       r"(?:\s+from\s+(\d+))?(?:\s+to\s+(\d+))?")
+# an accumulation dtype or GELU form the claim says the config uses, not one it compares against
+COMPARED = re.compile(r"(than|vs\.?|versus|against|instead of|from|over|unlike)\s+(?:the\s+)?(?:\S+\s+){0,3}$")
+ACC_RE = re.compile(r"\b(fp16|fp32)(?=[\s-]+accum)|\baccum\w*\s+(?:in|to|at|of|=)\s+(fp16|fp32)\b|\bacc\s*=\s*(fp16|fp32)\b")
+GELU_RE = re.compile(r"\b(approx\w*|tanh|exact|erf)(?=[\s-]+(?:\w+[\s-]+)?gelu)|\bgelu\s*(?:=|:)\s*(approx|exact)\b")
+SWITCH_RE = re.compile(r"\b(switch|chang|mov|swap|replac|convert|flip)\w*\s+(?:\w+\s+){0,2}$")
+
+
+def claim_errors(claim, start, p):
+    """Where a claim disagrees with the change start -> p that will run: numbers the params do not have, a knob it says changes
+    that does not (or moves the other way), and an accumulation dtype or GELU form other than the one in the params."""
+    t = claim.lower()
+    out = [f"it names {x}, the params do not" for x in mismatches(claim, p)]
+    for m in CHANGE_RE.finditer(t):
+        verb, k, frm, to = m.groups()
+        a, b = getattr(start, k), getattr(p, k)
+        if a == b:
+            out.append(f"\"{m.group(0)}\" names a change the params do not make, {k} stays {b}")
+        elif frm and int(frm) != a:
+            out.append(f"\"{m.group(0)}\" starts from {k} {frm}, the start config has {a}")
+        elif to and int(to) != b:
+            out.append(f"\"{m.group(0)}\" ends at {k} {to}, the params set {b}")
+        elif re.match(UP, verb) and b < a or re.match(DOWN, verb) and b > a:
+            out.append(f"\"{m.group(0)}\" goes the wrong way, {k} {a} to {b}")
+    for k, rx, norm in (("acc", ACC_RE, str.upper), ("gelu", GELU_RE, lambda v: "approx" if v.startswith(("approx", "tanh")) else "exact")):
+        what = "accumulation" if k == "acc" else "GELU"
+        for m in rx.finditer(t):
+            v, have = norm(next(g for g in m.groups() if g)), norm(getattr(p, k))
+            before = t[:m.start()]
+            if COMPARED.search(before):
+                continue
+            if v != have:
+                out.append(f"it names {v} {what}, the params use {have} {what}")
+            elif SWITCH_RE.search(before) and norm(getattr(start, k)) == v:
+                out.append(f"it switches to {v} {what}, which the start config already uses")
+    return list(dict.fromkeys(out))
 
 
 BOUND_RE = re.compile(r"(\d+(?:\.\d+)?e-\d+|0\.0+\d+)", re.IGNORECASE)

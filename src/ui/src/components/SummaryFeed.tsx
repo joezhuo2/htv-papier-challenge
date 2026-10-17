@@ -30,7 +30,7 @@ function SummaryCard({ view, item, onSelectRun, onPostMortem, collapsed, onToggl
   const base = h && (h.prediction.vs === 'naive' ? undefined : parentBest(view, h.branch, h.t))
   const eager = view.baselines?.eager.latency_ms
   const naive = view.baselines?.naive.latency_ms
-  const rejected = vd?.verdict === 'rejected' && !vd.provisional
+  const missed = (vd?.verdict === 'rejected' || vd?.verdict === 'inconclusive') && !vd.provisional
   // verdicts up to this card, so a later flip shows on the later card and the earlier card keeps its snapshot
   const trail = (item.hypothesis ? view.trail[item.hypothesis] ?? [] : []).filter(t => t.t <= item.t)
   // written while another branch waits on a help request
@@ -108,7 +108,7 @@ function SummaryCard({ view, item, onSelectRun, onPostMortem, collapsed, onToggl
         </div>
       </details>
       {onToggle ? <button className="link small" style={{ alignSelf: 'flex-start' }} onClick={onToggle}>Collapse</button> : null}
-      {rejected && item.hypothesis ? (
+      {missed && item.hypothesis ? (
         <button className="link small" style={{ alignSelf: 'flex-start' }} onClick={() => onPostMortem(item.hypothesis!)}>
           {view.postMortems.some(p => p.hypothesis === item.hypothesis) ? 'Open post-mortem' : 'Post-mortem pending'}
         </button>

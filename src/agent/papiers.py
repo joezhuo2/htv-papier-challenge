@@ -67,7 +67,7 @@ def words(text):
 
 def untex(text):
     """Drops LaTeX math delimiters ($x$, $$x$$, \\(x\\), \\[x\\]) and keeps their content, marks are shown as plain text."""
-    return TEX.sub(lambda m: next(g for g in m.groups() if g is not None), text).strip() if text else text
+    return TEX.sub(lambda m: next(g for g in m.groups() if g is not None), text).replace("$", "").strip() if text else text
 
 
 def item(id, kind, title, text, annotation=None):
@@ -85,6 +85,16 @@ class Library:
     def __init__(self, run=cli):
         self.run = run
         self.marks = None
+        self.docs = None
+
+    def document(self, text):
+        """The library document a conversation is about: the title sharing the most words with its text, at least two, else None.
+        The CLI does not link a conversation to its document, and its own title is a segment name like "Conversation overview"."""
+        if self.docs is None:
+            self.docs = [x.get("title") or "" for x in self.run(["list", "--kind", "document", "--limit", "50"]).get("items", [])]
+        w = words(text)
+        score, title = max(((len(w & words(t)), t) for t in self.docs), default=(0, None))
+        return title if score >= 2 else None
 
     def listed(self):
         if self.marks is None:
@@ -118,7 +128,7 @@ class Library:
                            (["--kind", "conversation"], "conversation")):
             got = hits(self.run(["search", query, *args, "--limit", str(limit)]), kind)
             if got:
-                return [item(i, kind, t, p) for i, t, p in got[:limit]]
+                return [item(i, kind, (self.document(p) or t) if kind == "conversation" else t, p) for i, t, p in got[:limit]]
         return []
 
     def rank(self, found):
