@@ -30,7 +30,7 @@ The `sweep` target measures one config's error across K (256 to 4096) on the lar
 One session runs branches one at a time on the single GPU, applying queued commands between iterations.
 
 1. Start: measure eager and the naive kernel, refuse to start if naive fails the 1e-3 gate, create the `main` branch (lens `both`), emit `session_started`.
-2. Each iteration picks the running branch with the fewest iterations, reads Papiers for that branch's topic, and asks the fast model for a hypothesis: a claim, a prediction (`min_speedup` against `naive` or `parent_best`) and params. The parser refuses non-JSON, free-form code (any key outside Params) and implausible predictions (1.02 to 2.0x against the best so far, 1.1 to 10x against naive), and retries up to three times. A config already tried anywhere in the session is refused.
+2. Each iteration picks the running branch with the fewest iterations, reads Papiers for that branch's topic, and asks the fast model for a hypothesis (the prompt quotes the measured headroom from `src/harness/headroom.json`, the best sweep config at 2.75x vs naive and 1.03x vs eager, written by `harness.stability`, as information only): a claim, a prediction (`min_speedup` against `naive` or `parent_best`) and params. The parser refuses non-JSON, free-form code (any key outside Params) and implausible predictions (1.02 to 2.0x against the best so far, 1.1 to 10x against naive), and retries up to three times. A config already tried anywhere in the session is refused.
 3. The error bound in the prediction is not the model's choice: the code sets it from the branch's lens (see Lens bounds).
 4. The run is measured with same-window references, and `verdict.judge` decides in code: `confirmed`, `rejected` or `inconclusive` (a speedup within the noise band, the larger of the calibrated band and the run's own spread). A result that passes only because the Speed tolerance is looser, or whose adversarial error is ungated, is marked provisional.
 5. Outcomes: an error-bound failure on a lens branch rejects the branch, runs the K sweep post-mortem, exports a negative result, and forks a pivot branch that rules out the failing change (at most 3 branches per lens). A missed speedup or a compile failure is an ordinary miss. An inconclusive verdict asks for help (once per branch). Two misses in a row or the iteration budget closes a branch.
@@ -59,11 +59,11 @@ Gemini is the default provider when `GEMINI_API_KEY` is set: `gemini-3.5-flash-l
 
 ### Live controls
 
-Commands: `add_directive` (rate limited to one per lens per 10 s and six per session), `answer_help`, `start`, `stop`, `retry`, and `approve_hybrid` (logged only, not implemented in the agent). `MAX_HYPS` caps a live session (default 1 in the server). Harness timeouts produce an `agent_error` of kind `harness_timeout` and a failed run with `error: "timed out"`.
+Commands: `add_directive` (rate limited to one per lens per 10 s and six per session), `answer_help`, `start` (optional `record: true` for the recording mode, capped by `RECORD_HYPS` instead of `MAX_HYPS`), `stop` (acts at once, an in-flight model call is abandoned), `retry`, and `approve_hybrid` (logged only, not implemented in the agent). `MAX_HYPS` caps a live session (default 1 in the server). Harness timeouts produce an `agent_error` of kind `harness_timeout` and a failed run with `error: "timed out"`.
 
 ## Server (`src/server/app.py`)
 
-One session per process. It waits for a `start` command from the UI unless `AUTOSTART=1`. `/ws` sends the session history as one array on connect (it starts with `session_started`, so the UI resets) and then each new event, and accepts validated commands. `/preflight` runs real checks: `nvidia-smi`, Gemini and NIM `/models` with the keys, and a Papiers search. Every session's log is `runs/sessions/<id>/events.jsonl`, the source of truth.
+One session at a time. It waits for a `start` command from the UI unless `AUTOSTART=1`, and `POST /restart` stops it and replaces it with a new session waiting for Start. `/ws` sends the session history as one array on connect (it starts with `session_started`, so the UI resets) and then each new event, and accepts validated commands. `/preflight` runs real checks: `nvidia-smi`, Gemini and NIM `/models` with the keys, and a Papiers search. Every session's log is `runs/sessions/<id>/events.jsonl`, the source of truth.
 
 ## UI (`src/ui`)
 

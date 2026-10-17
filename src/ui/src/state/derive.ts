@@ -67,7 +67,6 @@ export const runFor = (v: View, hypothesis: string) => [...v.runs].reverse().fin
 
 export interface LedgerRow {
   hypothesis: string
-  lens: string
   prediction: string
   result: string
   verdict?: Verdict
@@ -82,10 +81,8 @@ export const ledgerRows = (v: View): LedgerRow[] =>
     const final = v.ledger?.find(l => l.hypothesis === h.id)
     const vd = v.verdicts[h.id]
     const run = runFor(v, h.id)
-    const lens = v.branches.find(b => b.id === h.branch)?.lens ?? ''
     return {
       hypothesis: h.id,
-      lens,
       prediction: `${times(h.prediction.min_speedup)} vs ${h.prediction.vs === 'naive' ? 'naive' : 'best'}`,
       result: run?.metrics ? `${ms(run.metrics.latency_ms)}, adv ${sci(run.metrics.adv_error)}` : '',
       verdict: final?.verdict ?? vd?.verdict,
@@ -119,4 +116,20 @@ export const windowText = (m: Metrics) => {
     .filter(k => m.speedups?.[k] !== undefined)
     .map(k => `${times(m.speedups![k]!)} +/- ${(m.speedups![k]! * (m.spreads?.[k] ?? 0)).toFixed(2)}x vs ${names[k]}`)
     .join(', ')
+}
+
+const GENERIC_TITLE = /^(conversation( overview| messages)?|untitled)?$/i
+
+// Papiers conversation snippets start with the question ("Joe Zhuo: Summarize this article Agent: ## Summary The article is ...").
+// Keep the answer, drop Markdown heading markers, and name generic conversations after the answer's first sentence.
+export const cleanNote = (note: { title: string; excerpt: string }) => {
+  let text = note.excerpt.replace(/\s+/g, ' ').trim()
+  const agent = text.lastIndexOf('Agent:')
+  if (agent >= 0) text = text.slice(agent + 'Agent:'.length)
+  else if (text.includes('## ')) text = text.slice(text.indexOf('## '))
+  text = text.replace(/#{1,6}\s+\S+\s*/g, '').trim()
+  if (!GENERIC_TITLE.test(note.title.trim())) return { title: note.title, excerpt: text }
+  const first = (text.split(/(?<=\.)\s/)[0] ?? '').replace(/^(the|this) (article|tutorial|paper|post) (is|describes|explains|shows)\s+(an?\s+)?/i, '').replace(/\.$/, '')
+  const title = first.length > 90 ? `${first.slice(0, first.lastIndexOf(' ', 87))}...` : first
+  return { title: title ? title[0].toUpperCase() + title.slice(1) : note.title, excerpt: text }
 }

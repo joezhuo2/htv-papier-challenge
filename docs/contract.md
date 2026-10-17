@@ -11,6 +11,7 @@
 5. `run_finished` gains an optional `error` (`"timed out"` for the harness timeout, otherwise the failure text). A failed run's metrics fields are null.
 6. New event `agent_error { kind: 'llm_timeout' | 'llm_error' | 'harness_timeout', text, branch?, retry_in_s? }`.
 7. `Command` gains `start`, `stop` and `retry`.
+8. `start` takes an optional `record: true` (recording mode, up to `RECORD_HYPS` hypotheses, the log is saved as a replay). The default start keeps the live demo cap. No event shapes changed.
 
 ## Still open
 

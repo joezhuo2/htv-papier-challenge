@@ -18,7 +18,7 @@ describe('Papiers panel', () => {
     fireEvent.change(screen.getByLabelText('Search your library'), { target: { value: 'FP16 accumulation' } })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Search' })) })
     expect(fetch).toHaveBeenCalledWith('/papiers/search?q=FP16%20accumulation')
-    expect(screen.getByText('Triton FP16 matmul tutorial')).toBeTruthy()
+    expect(screen.getAllByText('Triton FP16 matmul tutorial').length).toBeGreaterThan(0)
   })
 
   it('shows the server error instead of results', async () => {

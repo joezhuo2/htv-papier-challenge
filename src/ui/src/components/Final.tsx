@@ -52,12 +52,14 @@ export function ResultCard({ view }: { view: View }) {
 
 interface Check { ok: boolean; detail: string }
 
-export function Preflight({ onStart, fallback }: { onStart: () => void; fallback: string }) {
+export function Preflight({ onStart, fallback }: { onStart: (record: boolean) => void; fallback: string }) {
   const [checks, setChecks] = useState<Record<string, Check>>()
+  const [caps, setCaps] = useState<{ cap: number | null; record_cap: number }>()
   const [error, setError] = useState<string>()
   useEffect(() => {
-    fetch('/preflight').then(r => r.json()).then(b => setChecks(b.checks), (e: Error) => setError(`Could not reach the agent server: ${e.message}`))
+    fetch('/preflight').then(r => r.json()).then(b => { setChecks(b.checks); setCaps(b) }, (e: Error) => setError(`Could not reach the agent server: ${e.message}`))
   }, [])
+  const plural = (n: number) => `${n} hypothes${n === 1 ? 'is' : 'es'}`
   const failed = checks && Object.values(checks).some(c => !c.ok)
   return (
     <article className="card focus" data-testid="preflight" style={{ maxWidth: 560 }}>
@@ -73,8 +75,18 @@ export function Preflight({ onStart, fallback }: { onStart: () => void; fallback
         </ul>
       )}
       <div className="inline">
-        <button className="primary" onClick={onStart} disabled={!checks}>Start session</button>
+        <button className="primary" onClick={() => onStart(false)} disabled={!checks} data-testid="start">Start session</button>
+        {caps?.cap ? <span className="small muted">table demo, capped at {plural(caps.cap)}</span> : null}
         <a href={fallback} className={failed || error ? 'strong' : 'muted'}>Fall back to the recorded run</a>
+      </div>
+      <hr className="divider" />
+      <h3>Record a replay</h3>
+      <p className="small muted">
+        Not the table demo. Runs the full loop for up to {plural(caps?.record_cap ?? 8)} or until you press Stop, accepts directives and help
+        answers at any point, and saves the whole event log as a replay under runs/sessions.
+      </p>
+      <div className="inline">
+        <button onClick={() => onStart(true)} disabled={!checks} data-testid="record">Start recording</button>
       </div>
     </article>
   )

@@ -237,7 +237,11 @@ svg [role='button']:focus-visible > .hit { stroke: var(--ink); stroke-width: 2; 
 .stack { display: flex; flex-direction: column; gap: 8px; }
 .inline { display: flex; gap: 6px; align-items: center; }
 ul.plain { margin: 0; padding-left: 16px; }
-.ledger .table td, .ledger .table th { padding: 3px 4px; }
+.ledger { overflow-x: hidden; }
+.copy-id { align-self: flex-start; text-align: left; overflow-wrap: anywhere; }
+.ledger-list { list-style: none; margin: 0; padding: 0; }
+.ledger-list li { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.ledger-list .row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 6px; }
 .meta { font-size: 12px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
 .notice { font-size: 12px; border-top: 1px solid var(--border); padding-top: 6px; }
 .panel-head { position: absolute; top: 8px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 12px; color: var(--muted); pointer-events: none; z-index: 1; }

@@ -176,6 +176,7 @@ export type Command =
   | { type: 'add_directive'; lens: Lens; text: string }
   | { type: 'answer_help'; help: string; option: string; note?: string; by: Lens }
   | { type: 'approve_hybrid'; branches: string[] }
-  | { type: 'start' }
+  // record runs the full loop for up to RECORD_HYPS hypotheses and saves the log as a replay, the default start keeps the live demo cap
+  | { type: 'start'; record?: boolean }
   | { type: 'stop' }
   | { type: 'retry' }

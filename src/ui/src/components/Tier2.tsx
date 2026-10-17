@@ -76,22 +76,22 @@ export function Ledger({ view }: { view: View }) {
         <h2>Hypothesis ledger</h2><span className="muted small">{rows.length}{view.ledger ? ', final' : ''}</span>
       </summary>
       {rows.length === 0 ? <p className="empty">No hypotheses yet.</p> : (
-        <table className="table">
-          <thead><tr><th>id</th><th>predicted, result</th><th>verdict</th><th>branch</th></tr></thead>
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.hypothesis}>
-                <td><span className="mono">{r.hypothesis}</span><div className="muted">{r.lens}</div></td>
-                <td>{r.prediction}<div className="muted">{r.result || 'not run'}</div></td>
-                <td>
-                  <VerdictChip verdict={r.verdict} provisional={r.provisional} />
-                  {r.history.length > 1 ? <div className="muted">was {r.history.slice(0, -1).join(', ')}</div> : null}
-                </td>
-                <td><span className="mono">{r.branch}</span>{r.note ? <div className="tag">Papiers {r.note}</div> : null}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <ol className="ledger-list">
+          {rows.map(r => (
+            <li key={r.hypothesis}>
+              <div className="row">
+                <span className="mono strong">{r.hypothesis}</span>
+                <VerdictChip verdict={r.verdict} provisional={r.provisional} />
+                {r.history.length > 1 ? <span className="small muted">was {r.history.slice(0, -1).join(', ')}</span> : null}
+                <span style={{ flex: 1 }} />
+                <span className="mono small muted">{r.branch}</span>
+              </div>
+              <div className="small">Predicted {r.prediction}</div>
+              <div className="small muted">{r.result ? `Measured ${r.result}` : 'Not run'}</div>
+              {r.note ? <div className="small muted">Informed by Papiers <span className="mono">{r.note}</span></div> : null}
+            </li>
+          ))}
+        </ol>
       )}
     </details>
   )

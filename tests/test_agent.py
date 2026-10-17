@@ -672,11 +672,11 @@ def test_record_start_lifts_the_live_cap_and_saves_the_log_as_a_replay(tmp_path,
         assert client.get("/preflight").json()["cap"] == 1
         with client.websocket_connect("/ws") as ws:
             ws.send_text(json.dumps({"type": "start", "record": True}))
-            assert "Recording mode" in json.loads(ws.receive_text())["text"]
         deadline = time.time() + 10
         while "session_finished" not in types(o) and time.time() < deadline:
             time.sleep(0.02)
     assert len(of(o, "hypothesis_proposed")) == 3
+    assert of(o, "agent_log")[2]["text"].startswith("Recording mode: the full loop for up to 3 hypotheses")
     assert "?mode=replay&file=/runs/sessions/test/events.jsonl" in of(o, "agent_log")[-1]["text"]
     assert types(o)[-1] == "session_finished"
 

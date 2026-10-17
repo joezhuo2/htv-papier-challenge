@@ -158,6 +158,9 @@ class Orchestrator:
         self.log.emit("session_started", baselines={"eager": self.eager.contract(), "naive": self.naive.contract()}, branch=main.dict())
         self.log.emit("agent_log", text=f"Baselines measured: naive {self.naive.latency_ms:.3f} ms, eager {self.eager.latency_ms:.3f} ms "
                                         f"(eager standard error {sci(self.eager.max_error)}). Starting from the naive configuration.")
+        if self.record:
+            self.log.emit("agent_log", text=f"Recording mode: the full loop for up to {self.max_hyps} hypotheses or until Stop. "
+                                            "Directives and help answers are accepted at any point.")
 
     def finish(self):
         ledger = [{"hypothesis": h.id, "verdict": h.judgment.verdict, "history": h.history} for h in self.hyps if h.judgment]

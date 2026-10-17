@@ -34,6 +34,22 @@ describe('Papiers reads in the event log', () => {
     expect(within(screen.getByTestId('papiers-panel')).getByText('read-only')).toBeTruthy()
   })
 
+  it('shows the answer of a conversation with a cleaned title and a copyable full id', async () => {
+    const id = 'cnv_fb1bac55818cfbd648a74abec8d21b7e'
+    const excerpt = 'Joe Zhuo: Summarize this article Agent: ## Summary The article is a Triton tutorial on implementing a high-performance FP16 matrix-multiplication kernel. Its goal is to show'
+    const writeText = vi.fn(async () => {})
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    render(<PapiersPanel view={fold([start, { t: 3000, type: 'papiers_context', query: 'q', note: { id, title: 'Conversation messages', excerpt } }])} />)
+    const read = screen.getByTestId('papiers-read')
+    expect(read.textContent).not.toContain('Summarize this article')
+    expect(read.textContent).not.toContain('##')
+    expect(within(read).getByText('Triton tutorial on implementing a high-performance FP16 matrix-multiplication kernel')).toBeTruthy()
+    expect(read.textContent).toContain('Its goal is to show')
+    await act(async () => { fireEvent.click(within(read).getByTestId('copy-id')) })
+    expect(writeText).toHaveBeenCalledWith(id)
+    expect(within(read).getByTestId('copy-id').textContent).toBe(`${id} copied`)
+  })
+
   it('shows no matching notes for an empty search, in the panel and the feed', () => {
     const v = fold([start, { t: 3200, type: 'papiers_context', query: 'accumulation numerical error' }])
     render(<><PapiersPanel view={v} /><SummaryFeed view={v} onSelectRun={() => {}} onPostMortem={() => {}} onReport={() => {}} onSend={() => {}} onHybrid={() => {}} /></>)

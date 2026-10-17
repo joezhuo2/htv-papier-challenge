@@ -48,6 +48,49 @@ describe('live controls', () => {
     expect(screen.queryByTestId('preflight')).toBeNull()
   })
 
+  it('recording is a separate start option and shows in the mode pill', async () => {
+    const { sent, push } = setup()
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    fireEvent.click(screen.getByRole('button', { name: 'Start recording' }))
+    expect(sent()).toEqual([{ type: 'start', record: true }])
+    push(recorded[0], { t: 100, type: 'agent_log', text: 'Recording mode: the full loop for up to 8 hypotheses or until Stop.' })
+    expect(screen.getByTestId('mode-pill').textContent).toContain('live, recording')
+  })
+
+  it('stop shows stopping until the session finishes, and new session restarts the server session', async () => {
+    const { sent, push } = setup()
+    push(recorded[0])
+    fireEvent.click(screen.getByRole('button', { name: 'stop' }))
+    expect(sent()).toEqual([{ type: 'stop' }])
+    expect((screen.getByRole('button', { name: 'stopping...' }) as HTMLButtonElement).disabled).toBe(true)
+    push(recorded.at(-1)!)
+    expect((screen.getByRole('button', { name: 'stop' }) as HTMLButtonElement).disabled).toBe(true)
+    const fetch = vi.fn(async () => new Response('{}', { status: 500 }))
+    vi.stubGlobal('fetch', fetch)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'new session' })) })
+    expect(fetch).toHaveBeenCalledWith('/restart', { method: 'POST' })
+  })
+
+  it('directives show whether the agent applied them and are disabled after the session finishes', () => {
+    const { push } = setup()
+    push(recorded[0])
+    const box = screen.getByLabelText('New directive or hunch')
+    const send = (text: string) => {
+      fireEvent.change(box, { target: { value: text } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    }
+    send('Go faster.')
+    expect(screen.getByText('Sent, waiting for the agent: Go faster.')).toBeTruthy()
+    push({ t: 5000, type: 'directive_added', directive: { id: 'd1', lens: 'speed', text: 'Go faster.', constraint: 'maximize_speed', threshold: 0.02 } })
+    expect(screen.getByText('Applied as d1: Go faster.')).toBeTruthy()
+    send('Even faster.')
+    push(recorded.at(-1)!)
+    expect(screen.getByText('Session finished, directive not applied: Even faster.')).toBeTruthy()
+    expect(screen.queryByText(/^Sent/)).toBeNull()
+    expect((screen.getByLabelText('New directive or hunch') as HTMLTextAreaElement).disabled).toBe(true)
+    expect(screen.getByText('Session finished, new directives are not applied.')).toBeTruthy()
+  })
+
   it('shows a timeout as a visible state with retry and stop, cleared by progress', () => {
     const { sent, push } = setup()
     push(recorded[0], { t: 3000, type: 'agent_error', kind: 'llm_timeout', branch: 'main', retry_in_s: 30, text: 'The hypothesis model failed (Timeout). Retrying in 30 s or on retry.' })

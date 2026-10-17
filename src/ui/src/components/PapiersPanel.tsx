@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { HypothesisView, View } from '../state/reducer'
-import { clock, papiersNote } from '../state/derive'
+import { cleanNote, clock, papiersNote } from '../state/derive'
 import { MockTag } from './Glyph'
 
 interface Item { id: string; kind: string; title: string; excerpt: string }
@@ -18,10 +18,21 @@ export function showNote(id: string) {
   el.classList.add('flash')
 }
 
+export function CopyId({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => navigator.clipboard?.writeText(id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) })
+  return (
+    <button type="button" className="link mono small copy-id" onClick={copy} title="Copy the Papiers id" data-testid="copy-id">
+      {id} <span className="muted">{copied ? 'copied' : 'copy'}</span>
+    </button>
+  )
+}
+
 export function InformedBy({ view, h }: { view: View; h: HypothesisView }) {
   const id = papiersNote(h)
   if (!id) return null
-  const note = view.notes.find(n => n.id === id)
+  const found = view.notes.find(n => n.id === id)
+  const note = found && cleanNote(found)
   return (
     <button className="informed" onClick={() => showNote(id)} data-testid="informed-by" title={note?.excerpt}>
       <span className="strong">Informed by note <span className="mono">{id}</span></span>
@@ -55,13 +66,15 @@ export function PapiersPanel({ view }: { view: View }) {
       {view.reads.length === 0 ? <p className="empty">Nothing read yet.</p> : null}
       {view.reads.map((r, i) => {
         const first = r.note && view.reads.findIndex(x => x.note?.id === r.note!.id) === i
+        const note = r.note && cleanNote(r.note)
         return (
-          <div key={i} className="card flash" id={first ? anchor(r.note!.id) : undefined} data-testid="papiers-read" title={r.note?.excerpt}>
+          <div key={i} className="card flash" id={first ? anchor(r.note!.id) : undefined} data-testid="papiers-read" title={note?.excerpt}>
             <p className="meta"><span>{clock(r.t)}</span>{r.query ? <span>query "{r.query}"</span> : null}<MockTag on={r.mock} /></p>
-            {r.note ? (
+            {r.note && note ? (
               <>
-                <div className="row"><span className="strong small">{r.note.title}</span><span className="mono small muted">{r.note.id}</span></div>
-                <p className="small clamp">{r.note.excerpt}</p>
+                <span className="strong small">{note.title}</span>
+                <p className="small clamp">{note.excerpt}</p>
+                <CopyId id={r.note.id} />
               </>
             ) : <p className="small muted">No matching notes.</p>}
           </div>
@@ -77,13 +90,16 @@ export function PapiersPanel({ view }: { view: View }) {
       {state === 'loading' ? <p className="small muted">Searching Papiers...</p> : null}
       {state !== 'idle' && state !== 'loading' ? <p className="small" role="alert">{state}</p> : null}
       {items && items.length === 0 ? <p className="empty">No matching notes.</p> : null}
-      {items?.map(r => (
-        <div key={r.id} className="card">
-          <div className="row"><span className="strong small">{r.title}</span><span className="tag">{r.kind}</span></div>
-          <p className="small clamp">{r.excerpt}</p>
-          <p className="meta"><span className="mono">{r.id}</span></p>
-        </div>
-      ))}
+      {items?.map(r => {
+        const note = cleanNote(r)
+        return (
+          <div key={r.id} className="card">
+            <div className="row"><span className="strong small">{note.title}</span><span className="tag">{r.kind}</span></div>
+            <p className="small clamp">{note.excerpt}</p>
+            <CopyId id={r.id} />
+          </div>
+        )
+      })}
     </div>
   )
 }

@@ -58,9 +58,9 @@ const papiers = (): Plugin => ({
 export default defineConfig({
   plugins: [react(), serveRuns(), papiers()],
   resolve: { alias: { '@contract': contract } },
-  preview: { proxy: { '/ws': { target: 'ws://127.0.0.1:8000', ws: true }, '/preflight': 'http://127.0.0.1:8000' } },
+  preview: { proxy: { '/ws': { target: 'ws://127.0.0.1:8000', ws: true }, '/preflight': 'http://127.0.0.1:8000', '/restart': 'http://127.0.0.1:8000' } },
   server: {
     fs: { allow: ['..'] },
-    proxy: { '/ws': { target: 'ws://127.0.0.1:8000', ws: true }, '/preflight': 'http://127.0.0.1:8000' },
+    proxy: { '/ws': { target: 'ws://127.0.0.1:8000', ws: true }, '/preflight': 'http://127.0.0.1:8000', '/restart': 'http://127.0.0.1:8000' },
   },
 })

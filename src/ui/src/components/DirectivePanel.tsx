@@ -12,6 +12,18 @@ interface Props {
   onSelectBranch: (b: string) => void
 }
 
+// what happened to a directive this client sent, from the session's own events
+export const directiveStatus = (view: View, s: Sent) => {
+  if (s.cmd.type !== 'add_directive') return ''
+  const { lens, text } = s.cmd
+  if (!s.delivered) return 'Recorded locally, not delivered in replay'
+  const applied = view.directives.find(d => d.lens === lens && d.text === text)
+  if (applied) return `Applied as ${applied.id}`
+  const ignored = view.log.find(l => l.text.startsWith(`Ignored a ${lens} directive`) && l.text.includes(text.slice(0, 80)))
+  if (ignored) return `Not applied: ${ignored.text.slice(ignored.text.indexOf('(') + 1, ignored.text.indexOf(')'))}`
+  return view.finished ? 'Session finished, directive not applied' : 'Sent, waiting for the agent'
+}
+
 export function DirectivePanel({ view, sent, onSend, onSelectBranch }: Props) {
   const [text, setText] = useState('')
   const lens: Lens = view.lens
@@ -19,7 +31,7 @@ export function DirectivePanel({ view, sent, onSend, onSelectBranch }: Props) {
   const mine = sent.filter(s => s.cmd.type === 'add_directive' && s.cmd.lens === lens)
   const submit = () => {
     const t = text.trim()
-    if (!t) return
+    if (!t || view.finished) return
     onSend({ type: 'add_directive', lens, text: t })
     setText('')
   }
@@ -55,18 +67,18 @@ export function DirectivePanel({ view, sent, onSend, onSelectBranch }: Props) {
       <form className="stack" onSubmit={e => { e.preventDefault(); submit() }}>
         <label className="label" htmlFor="directive">New directive or hunch</label>
         <textarea
-          id="directive" value={text} onChange={e => setText(e.target.value)}
+          id="directive" value={text} onChange={e => setText(e.target.value)} disabled={view.finished}
           placeholder={lens === 'speed' ? 'Push throughput harder' : 'Keep max error under 1e-3'}
           onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit() }}
         />
         <div className="inline">
-          <button type="submit" className="primary" disabled={!text.trim()}>Send</button>
-          <span className="muted small">as {lensName(lens)}</span>
+          <button type="submit" className="primary" disabled={!text.trim() || view.finished}>Send</button>
+          <span className="muted small">{view.finished ? 'Session finished, new directives are not applied.' : `as ${lensName(lens)}`}</span>
         </div>
       </form>
       {mine.map((s, i) => (
         <p key={i} className="small muted">
-          {s.delivered ? 'Sent' : 'Recorded locally, not delivered in replay'}: {s.cmd.type === 'add_directive' ? s.cmd.text : ''}
+          {directiveStatus(view, s)}: {s.cmd.type === 'add_directive' ? s.cmd.text : ''}
         </p>
       ))}
     </div>

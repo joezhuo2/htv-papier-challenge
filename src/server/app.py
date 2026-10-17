@@ -90,8 +90,6 @@ def create(factory=None, checks=CHECKS, autostart=None):
             return
         if record:
             state["orch"].record, state["orch"].max_hyps = True, record_hyps
-            state["orch"].log.emit("agent_log", text=f"Recording mode: the full loop for up to {record_hyps} hypotheses or until Stop. "
-                                                     "Directives and help answers are accepted at any point.")
         state["thread"] = threading.Thread(target=state["orch"].run, daemon=True)
         state["thread"].start()
 

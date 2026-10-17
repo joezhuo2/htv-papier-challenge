@@ -5,6 +5,7 @@ import { clock } from '../state/derive'
 interface Props {
   mode: Mode
   mock: boolean
+  recording?: boolean
   judging: boolean
   now: number
   paused: boolean
@@ -25,12 +26,14 @@ interface Props {
   onAutoPause: (on: boolean) => void
   onStop: () => void
   onSave: () => void
+  onNewSession: () => void
+  live?: { started: boolean; finished: boolean; stopping: boolean }
 }
 
 export function TopBar(p: Props) {
   const replay = p.mode !== 'live'
   const modes: Mode[] = p.judging ? ['replay', 'live'] : ['mock', 'live']
-  const pill = p.mode === 'live' ? 'live' : p.mode === 'replay' ? 'recorded run' : 'mock'
+  const pill = p.mode === 'live' ? (p.recording ? 'live, recording' : 'live') : p.mode === 'replay' ? 'recorded run' : 'mock'
   return (
     <header className="topbar">
       <h1>Research War Room</h1>
@@ -78,7 +81,10 @@ export function TopBar(p: Props) {
       ) : (
         <div className="controls" role="group" aria-label="live controls">
           <button onClick={p.onSave} title="Download the events received so far as a JSONL replay">save as replay</button>
-          <button onClick={p.onStop} title="Finish the session with what is logged so far">stop</button>
+          <button onClick={p.onStop} disabled={!p.live?.started || p.live.finished || p.live.stopping} title="Finish the session with what is logged so far">
+            {p.live?.stopping && !p.live.finished ? 'stopping...' : 'stop'}
+          </button>
+          <button onClick={p.onNewSession} title="Stop this session if it is running and start a new one">new session</button>
         </div>
       )}
     </header>

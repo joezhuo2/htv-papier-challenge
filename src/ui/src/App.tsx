@@ -24,6 +24,12 @@ export function App({ source }: { source: Source }) {
   const s = useSession(source)
   const { view, dispatch, controls } = s
   const [logOpen, setLogOpen] = useState(false)
+  const [stopping, setStopping] = useState(false)
+  const newSession = async () => {
+    if (view.started && !view.finished && !window.confirm('Stop this session and start a new one?')) return
+    const res = await fetch('/restart', { method: 'POST' })
+    if (res.ok) window.location.reload()
+  }
   const [closedPm, setClosedPm] = useState<string[]>([])
   const [tab, setTab] = useState<'research' | 'report' | 'result'>('research')
   // the result screen opens once when the session finishes, and a restart returns to the research view
@@ -85,12 +91,13 @@ export function App({ source }: { source: Source }) {
   return (
     <div className="app" data-lens={view.lens}>
       <TopBar
-        mode={source.mode} mock={view.mock} judging={JUDGING} now={s.now} paused={s.paused} ended={s.ended} speed={s.speed}
+        mode={source.mode} mock={view.mock} recording={view.log.some(l => l.text.startsWith('Recording mode'))} judging={JUDGING} now={s.now} paused={s.paused} ended={s.ended} speed={s.speed}
         compression={s.compression} chapters={marks} autoPause={s.autoPause}
         onPause={controls.pause} onResume={controls.resume} onStep={controls.step}
         onPrev={controls.prev} canPrev={s.index > 0} onMode={m => { window.location.search = `?mode=${m}` }}
         onSpeed={controls.setSpeed} onRestart={controls.restart} onChapter={jump} onAutoPause={controls.setAutoPause}
-        onStop={() => s.send({ type: 'stop' })} onSave={save}
+        onStop={() => { setStopping(true); s.send({ type: 'stop' }) }} onSave={save} onNewSession={newSession}
+        live={{ started: view.started, finished: view.finished, stopping }}
       />
       <div className="accent-line" />
       <Banner error={s.error} status={s.status} onRetry={s.retry} />
@@ -112,7 +119,7 @@ export function App({ source }: { source: Source }) {
             </div>
           ) : null}
           {source.mode === 'live' && !view.started ? (
-            <Preflight onStart={() => s.send({ type: 'start' })} fallback={`?mode=replay&file=${encodeURIComponent(DEFAULT_REPLAY)}`} />
+            <Preflight onStart={record => s.send(record ? { type: 'start', record } : { type: 'start' })} fallback={`?mode=replay&file=${encodeURIComponent(DEFAULT_REPLAY)}`} />
           ) : tab === 'result' && view.finished ? <ResultCard view={view} /> : tab === 'report' && view.report ? <ReportView view={view} /> : (
             <>
               <BranchGraph view={view} onSelectBranch={selectBranch} onSelectRun={selectRun} showPending={source.mode !== 'replay'} />
