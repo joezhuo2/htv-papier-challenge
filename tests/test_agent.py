@@ -1020,7 +1020,7 @@ def test_constraint_directives_are_bounds_and_a_repeated_hunch_is_retested_on_th
     monkeypatch.setattr(orchestrator, "DIRECTIVE_GAP_S", 0)
     w8 = P | {"warps": 8}
     engine = Engine(TABLE | {json.dumps(w8, sort_keys=True): met(0.55), json.dumps(w8 | {"gelu": "approx"}, sort_keys=True): met(0.54, err=6.9e-4, adv=7.2e-4)})
-    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(w8, 1.05), h(P | {"gelu": "approx"}, 1.02), default="no json"),
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"gelu": "approx"}, 1.02), h(w8, 1.05), default="no json"),
              engine=engine, main_iters=1, branch_iters=3, help_deadline_s=0.3)
     run_with(o, [(1, "speed", "Push throughput harder than tile tuning alone."), (4, "speed", "Try the tanh approximate GELU.")])
     hyps = {e["hypothesis"]["id"]: e["hypothesis"] for e in of(o, "hypothesis_proposed")}
@@ -1028,13 +1028,13 @@ def test_constraint_directives_are_bounds_and_a_repeated_hunch_is_retested_on_th
     assert not any("Hunch" in (x.get("note") or "") for x in hyps.values() if x["id"] != "H4")
     texts = [e["text"] for e in of(o, "plan_change")]
     assert any(t.startswith("d1 sets a bound, not a specific change") for t in texts)
-    assert any("already tested in H3 (rejected, 0.86x vs its parent) on 128x128x32 tiles" in t for t in texts)
+    assert any("already tested in H2 (rejected, 1.00x vs its parent) on 128x128x32 tiles" in t for t in texts)
     d2 = [e["text"] for e in of(o, "plan_change") if e["help"] == "d2"]
     assert len(d2) == 1 and "This is a retest" in d2[0] and d2[0].endswith("so the run changes only gelu exact to approx on the current best 128x128x32 tiles, 8 warps, 3 stages.")
     assert o.hunches["d2"] == "H4"
     h4 = hyps["H4"]
-    assert h4["params"] == w8 | {"gelu": "approx"} and h4["note"] == "Hunch from the Speed lens in directive d2, a retest of H3 on the current best tiles"
-    assert h4["claim"].startswith("Retest of H3: gelu exact to approx on the current best 128x128x32 tiles, 8 warps, 3 stages is at least 1.02x")
+    assert h4["params"] == w8 | {"gelu": "approx"} and h4["note"] == "Hunch from the Speed lens in directive d2, a retest of H2 on the current best tiles"
+    assert h4["claim"].startswith("Retest of H2: gelu exact to approx on the current best 128x128x32 tiles, 8 warps, 3 stages is at least 1.02x")
     assert not any(tag.startswith(f"{h4['branch']}-1") for _, tag, _ in o.ask.calls)  # built in code, no model call
     assert_contract(o.log.events)
 
@@ -1298,7 +1298,7 @@ def test_a_retest_refusal_says_which_run_already_had_the_config(tmp_path):
     o.hunch(o.branches["prec"], "Try the tanh approximate GELU.", "Hunch from the Speed lens in directive d3", "d3", "speed", {"gelu": "approx"})
     assert [e["text"] for e in of(o, "plan_change")] == [
         ("Because the Speed lens sent \"Try the tanh approximate GELU.\", I am not testing it because that exact config, 64x64x32 tiles, 4 warps, 3 stages, "
-        "FP32 accumulation, approx GELU, already ran as H1 on prec (inconclusive). This is a retest: it was already tested in H2 (confirmed) on 128x128x32 tiles.")]
+        "FP32 accumulation, approx GELU, already ran as H1 on prec (inconclusive). This is a retest: it was already tested in H1 (inconclusive) on 64x64x32 tiles.")]
     assert "prec" not in o.hints and o.hunches["d3"].startswith("not run: that exact config")
 
 
@@ -1534,3 +1534,14 @@ def test_the_best_run_is_ranked_by_latency_and_reported_with_the_same_metric(tmp
     best = of(o, "session_finished")[0]["best"]
     assert best == {"run": "r2", "vs_naive": round(1.891 / 0.628, 2), "vs_eager": round(0.669 / 0.628, 2)}
     assert of(o, "final_report")[0]["report"]["best"]["run"] == "r2" and of(o, "final_report")[0]["report"]["best"]["vs_naive"] == best["vs_naive"]
+
+
+def test_a_hunch_is_a_retest_only_if_the_earlier_run_changed_no_other_knob(tmp_path):
+    from harness.kernel import Params
+    o = hybrid_state(tmp_path, Params(128, 128, 64, 8, 4, acc="fp16", gelu="approx"))
+    o.hunch(o.branches["prec"], "Try the tanh approximate GELU.", "Hunch from the Speed lens in directive d3", "d3", "speed", {"gelu": "approx"})
+    text = of(o, "plan_change")[-1]["text"]
+    assert "This is not a retest: it has not been tested in isolation, H2 changed it together with warps, acc" in text and "H2 (" not in text
+    assert o.tested({"gelu": "approx"}) is None and o.hints["prec"].params is None  # a first test goes to the model
+    o.hyps[2].params = Params(128, 128, 64, 4, 4, gelu="approx")
+    assert o.tested({"gelu": "approx"}) is o.hyps[2]

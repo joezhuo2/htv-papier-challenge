@@ -604,10 +604,14 @@ class Orchestrator:
         self.log.emit("plan_change", help=d["id"], text=f"{d['id']} sets a bound, not a specific change, so the next hypotheses on {b.id} are chosen by the agent "
                                                        f"and judged against max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound.")
 
+    def tried_with(self, delta):
+        """Measured hypotheses that set this hunch's values and changed at least one of them from what they were timed against."""
+        return [x for x in self.hyps if x.judgment and x.metrics and x.metrics.latency_ms and all(getattr(x.params, k) == v for k, v in delta.items())
+                and set(self.knobs(x)) & set(delta)]
+
     def tested(self, delta):
-        """The latest measured hypothesis whose own change was this hunch's, or None."""
-        hits = [x for x in self.hyps if x.judgment and x.metrics and x.metrics.latency_ms and all(getattr(x.params, k) == v for k, v in delta.items())
-                and any(getattr(self.prior(x)[0], k) != v for k, v in delta.items())]
+        """The latest hypothesis that tested this hunch in isolation (it changed no other knob), or None."""
+        hits = [x for x in self.tried_with(delta) if set(self.knobs(x)) <= set(delta)]
         return hits[-1] if hits else None
 
     def plan(self, b, delta):
@@ -640,8 +644,11 @@ class Orchestrator:
         if not e:
             p, why = None, None  # a first test goes to the model, which can fit the rest of the config around the change
         sp = e and (f", {e.speedup:.2f}x vs {'naive' if e.ref == 'naive' else 'its parent'}" if e.speedup else "")
+        mixed = delta and not e and self.tried_with(delta)
         status = (f"This is a retest: it was already tested in {e.id} ({e.judgment.verdict}{sp}) on {e.params.block_m}x{e.params.block_n}x{e.params.block_k} tiles"
-                  if e else "This is not a retest, nothing in the session has tested it yet")
+                  if e else f"This is not a retest: it has not been tested in isolation, {mixed[-1].id} changed it together with "
+                            f"{', '.join(k for k in self.knobs(mixed[-1]) if k not in delta)}" if mixed
+                  else "This is not a retest, nothing in the session has tested it yet")
         if why:
             self.hunches[ref] = f"not run: {why}"
             self.log.emit("plan_change", help=ref, text=f"{quoted}, I am not testing it because {why}. {status}.")
