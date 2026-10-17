@@ -2,6 +2,27 @@
 
 Every number here comes from a logged run on the build machine (RTX 5060 Laptop GPU, WSL2, PyTorch 2.11 + CUDA 12.8, Triton 3.6). Speedups are same-window: the candidate is timed interleaved with naive, eager and its parent in one child process, and the +/- is that window's measured spread. Logs live in `runs/` (gitignored), so the file names below are local evidence, not repo files.
 
+## Frozen demo run
+
+`demo/replay.jsonl` (tag `demo-freeze`) is the 20:00 UTC recording, `runs/sessions/20261017-155752`: 106 events, 2:53 real, about 1:30 in the player with idle gaps compressed. It is the only recording committed to the repo, so its numbers can be checked from a fresh clone. The table is generated from the log by `uv run python scripts/results_table.py --write`, not typed. Verdicts are the final ones after the Precision directive re-judged the logged runs, and "vs parent" is the same-window speedup over the run's parent (naive for r1). The best run, in bold, is the lowest latency among runs inside every active bound, whatever its verdict, so the rejected FP16 run r2 is faster but not eligible.
+
+<!-- results-table -->
+| Run | Hypothesis | Branch | Config | Latency (ms) | vs parent | vs naive | Standard error | Adversarial error | Registers | Spills | Verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| r1 | H0 | main | 128x128x64, 4 warps, 4 stages, FP32 acc, exact GELU | 0.783 | 2.52x (naive) | 2.52x | 4.9e-4 | 5.2e-4 | 255 | 24 | confirmed |
+| r2 | H1 | speed | 128x128x64, 4 warps, 4 stages, FP16 acc, exact GELU | 0.514 | 1.54x | 3.73x | 1.3e-2 | 7.1e-2 | 255 | 10 | rejected |
+| r3 | H2 | speed | 128x128x64, 4 warps, 3 stages, FP32 acc, exact GELU | 0.735 | 1.02x | 2.47x | 4.9e-4 | 5.2e-4 | 255 | 24 | inconclusive |
+| r4 | H3 | prec | 128x128x64, 8 warps, 4 stages, FP32 acc, exact GELU | 0.729 | 1.05x | 2.58x | 4.9e-4 | 5.2e-4 | 160 | 0 | inconclusive |
+| **r5** | H4 | speed2 | 128x128x64, 4 warps, 4 stages, FP32 acc, approx GELU | 0.719 | 1.07x | 2.59x | 6.9e-4 | 7.2e-4 | 255 | 0 | inconclusive |
+| r6 | H5 | speed2 | 128x128x64, 8 warps, 4 stages, FP32 acc, approx GELU | 0.730 | 1.10x | 2.63x | 6.9e-4 | 7.2e-4 | 171 | 0 | inconclusive |
+| r7 | H6 | prec | 128x128x64, 8 warps, 3 stages, FP32 acc, exact GELU | 0.731 | 1.07x | 2.57x | 4.9e-4 | 5.2e-4 | 160 | 0 | inconclusive |
+| r8 | H7 | prec | 128x128x128, 8 warps, 2 stages, FP32 acc, exact GELU | 0.825 | 0.95x | 2.29x | 4.9e-4 | 5.2e-4 | 166 | 0 | rejected |
+<!-- /results-table -->
+
+Measurement noise: each speedup comes with that window's per-round spread, and here the band was about 4% to 8% of the parent ratio (roughly 5%). Five of the eight results (H2 to H6) are inconclusive, their gains of 1.02x to 1.10x over their parents sit inside that band, so the agent could not call them either way. Only the big moves are clear: H0 over naive (2.52x, confirmed), FP16 accumulation (1.54x faster, rejected on error) and H7's 128-wide K tile (0.95x, rejected as slower). Run to run variation is of the same order: within this recording the vs-naive ratios of nearly identical FP32 configs span 2.47x to 2.63x, and r6 reports a higher vs-naive ratio than the best run r5 while being slower in absolute latency, because each ratio is measured in its own window. Across recordings the best FP32 result ranged from 2.5x to 2.8x vs naive and 0.93x to 1.05x vs PyTorch eager, so the honest summary is about 2.6x over the naive start and roughly on par with eager.
+
+Next steps: rerun the inconclusive configs (H2 to H6, starting with the best run H4) with more timing rounds to shrink the band, and test whether `tl.dot` runs in TF32 or IEEE mode, which is still the open question behind the eager comparison.
+
 ## Stable numbers
 
 From `harness.stability` (10 separate processes each, `runs/stability.log`, also saved to `src/harness/headroom.json`), plus the approximate GELU runs from live sessions.
@@ -30,7 +51,7 @@ PyTorch eager runs `gelu(x @ w + b)` as three FP16 operations, and each writes a
 | PyTorch eager (matmul, bias add and GELU in FP16) | 1.5e-3 | 2.5e-3 | 2.0e-3 |
 | Eager with `allow_fp16_reduced_precision_reduction = False` | 1.5e-3 | 1.5e-3 | 2.0e-3 |
 
-So the standard 1.5e-3 is two extra roundings before the GELU (the matmul output and the bias add each cost about one more half ulp), and the third rounding at the GELU output adds nothing measurable to the maximum. The adversarial 2.5e-3 is the large_k case (the adversarial error is the worse of large_k and large_mag): with K = 16384, cuBLAS reduces partial sums in reduced precision, PyTorch's default for FP16 GEMMs, and turning that off brings large_k back to 1.5e-3. So eager is a speed reference, not a correctness reference, and the README and UI say so.
+So the standard 1.5e-3 is two extra roundings before the GELU (the matmul output and the bias add each cost about one more half ulp), and the third rounding at the GELU output adds nothing measurable to the maximum. The adversarial 2.5e-3 is the large_k case (the adversarial error is the worse of large_k and large_mag): with K = 16384, cuBLAS reduces partial sums in reduced precision, PyTorch's default for FP16 GEMMs, and turning that off brings large_k back to 1.5e-3. So eager is a speed reference, not a correctness reference, and the README and UI say so. These measurements point at the FP16 intermediates, but the explanation is still treated as open until the fused kernel's `tl.dot` precision mode (TF32 or IEEE) has been checked, since the comparison assumes both sides accumulate in IEEE FP32.
 
 ## The designed failure (FP16 accumulation)
 

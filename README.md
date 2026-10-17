@@ -1,12 +1,41 @@
 # Multi-POV Research War Room
 
+An autonomous agent tunes a GPU kernel under two human lenses, Speed and Precision, and code, not the model, judges every result.
+
 A solo build for Hack the Valley 11, entered in the Papiers Autoresearch Challenge. An autonomous agent tunes a fused matmul + bias + GELU Triton kernel under two competing lenses, Speed and Precision. One person switches between the two lens tabs in a web UI, and in a real team these would be two people. The agent states a falsifiable prediction before every run, the verdict is computed in code from measured metrics (never by the LLM), it rejects its own failed hypotheses with a post-mortem, and it asks the relevant lens owner for help while it keeps exploring other branches.
 
-`war-room-plan.md` is the full spec, `decisions.md` records decisions that override it, and `docs/status.md` tracks progress.
+`war-room-plan.md` is the full spec, `decisions.md` records decisions that override it, `docs/status.md` tracks progress, and `docs/results.md` has the measured results.
+
+## Try the replay
+
+No GPU, no network and no `.env` needed, only Node 22 or newer (`npm ci` downloads the UI dependencies once). From the repo root:
+
+```bash
+cd src/ui && npm ci && npm run build:judging && npx vite preview
+```
+
+Open `http://localhost:4173/`. The judging build plays the frozen recording `demo/replay.jsonl` (tag `demo-freeze`), labelled recorded run, with idle gaps over 4 s compressed and disclosed. The 60-second tour, in player time:
+
+- 0:00 to 0:18: the eager and naive baselines, then H0 (128x128x64 tiles, 4 warps, 4 stages) confirmed at 2.52x over naive.
+- 0:22: a Speed directive with a 2e-2 tolerance opens the Speed branch, and at 0:28 the FP16 accumulation run H1 is provisionally confirmed at 1.54x over its parent.
+- 0:35: a Precision directive sets 1e-3 on both batches. The agent re-judges the logged runs without re-running them, flips H1 to rejected, raises the conflict banner and opens the Precision branch.
+- 0:43 to 0:47: a help request to the Speed lens (it keeps exploring while it waits) and the H1 post-mortem with the error versus K sweep.
+- 0:49 to 1:27: the typed GELU hunch runs as H4, and the remaining runs land inside the noise band or are rejected as slower.
+- 1:30: the final report: best run, what was ruled out, what to try next, and what a human has to decide.
+
+The findings exported from this run are in [docs/examples/exports](docs/examples/exports), and its run table is in [docs/results.md](docs/results.md).
+
+## Honest numbers
+
+- The best kernel is about 2.6x faster than the naive start (2.59x in the frozen run, 2.5x to 2.8x across recordings).
+- It is roughly on par with PyTorch eager, 0.93x to 1.05x depending on the timing window (0.97x in the frozen run).
+- FP16 accumulation is about 1.5x faster still, but its error is 1.3e-2 on the standard batch and 7.1e-2 on the adversarial batch, so the Precision lens rejects it.
+- PyTorch eager itself fails the 1e-3 gate, at 1.5e-3 standard and 2.5e-3 adversarial. The rounding measurements in docs/results.md point at its FP16 intermediates, but the explanation is still open; the next check is whether `tl.dot` runs in TF32 or IEEE mode.
+- Five of the eight results in the frozen run are inconclusive inside a noise band of roughly 5%.
 
 ## Status
 
-Working today: the benchmark harness, the agent loop with code computed verdicts, lens directives with lens-specific error bounds, branching and conflict detection, post-mortems with an error versus K sweep, help requests with a deadline and default, read-only Papiers context, findings export as Markdown, the FastAPI WebSocket server, and the React war room UI (mock, recorded replay, and live). Every number below comes from a logged run on the build machine. Final numbers come from the recorded demo session, so treat anything not in a session log as provisional.
+Working today: the benchmark harness, the agent loop with code computed verdicts, lens directives with lens-specific error bounds, branching and conflict detection, a hybrid step that proposes a merge when two lenses both find gains and otherwise declines with a logged reason, post-mortems with an error versus K sweep, help requests with a deadline and default, read-only Papiers context, findings export as Markdown files for manual import (the Papiers CLI is read-only today, so write-back is pending, not working), the FastAPI WebSocket server, and the React war room UI (mock, recorded replay, and live). Every number below comes from a logged run on the build machine. Final numbers come from the recorded demo session, so treat anything not in a session log as provisional.
 
 ## How the agent decides
 
@@ -27,7 +56,7 @@ Speedups are same-window: the candidate is timed interleaved with naive, eager a
 | Best sweep config (128x128x32, 4 warps, 3 stages) | 2.75x (2.70 to 2.78) | 1.03x (1.02 to 1.04) | 4.9e-4 | 5.2e-4 | yes |
 | Same config, FP16 accumulation | 4.03x (3.99 to 4.09) | 1.52x (1.49 to 1.54) | 1.3e-2 | 7.1e-2 | no |
 
-The best FP32 config is about 2.75x faster than the naive start and about 3% faster than eager, and eager itself fails the 1e-3 gate (its FP16 intermediate roundings, explained in docs/results.md). FP16 accumulation is about 1.48x faster still but fails the error bound by 13x on the standard batch and 71x on the adversarial batch, which is the failure the agent has to discover and reject by itself. Across processes the speedups vary by under 1% (coefficient of variation), and within one timing window the per-round spread is about 4%, which the verdicts use as the noise band.
+This table is the offline sweep, not an agent session. Its best FP32 config is about 2.75x faster than the naive start and about 3% faster than eager in that timing window, while the agent's recordings land at 2.5x to 2.8x and 0.93x to 1.05x (see Honest numbers), and eager itself fails the 1e-3 gate (the explanation is still open, see above). FP16 accumulation is about 1.48x faster still but fails the error bound by 13x on the standard batch and 71x on the adversarial batch, which is the failure the agent has to discover and reject by itself. Across processes the speedups vary by under 1% (coefficient of variation), and within one timing window the per-round spread is about 4%, which the verdicts use as the noise band.
 
 ## Model choice
 
@@ -96,7 +125,7 @@ uv run uvicorn server.app:app --port 8000
 cd src/ui && npm run dev
 ```
 
-The UI also plays the mock script (`?mode=mock`, the default in development, always tagged mock) and recorded sessions (`?mode=replay&file=/runs/sessions/<id>/events.jsonl`, labelled recorded run, with idle gaps over 4 s compressed and disclosed). For judging, build without mock mode; it opens the first recorded run that loads, `runs/demo.jsonl` then `runs/fallback1.jsonl`, `runs/fallback2.jsonl` and on:
+The UI also plays the mock script (`?mode=mock`, the default in development, always tagged mock) and recorded sessions (`?mode=replay&file=/runs/sessions/<id>/events.jsonl`, labelled recorded run, with idle gaps over 4 s compressed and disclosed). For judging, build without mock mode; it opens the first recorded run that loads, the committed `demo/replay.jsonl` then the local `runs/fallback1.jsonl`, `runs/fallback2.jsonl` and on. The 19:41 UTC recording is committed too and plays with `?mode=replay&file=/demo/fallback-1541.jsonl`. Freeze any new demo recording with `scripts/freeze.sh <session-folder>` (`--as <file>` for a fallback), which checks the log is complete and the copies hold no secrets:
 
 ```bash
 cd src/ui && npm run build:judging && npx vite preview
