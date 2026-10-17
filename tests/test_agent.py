@@ -667,7 +667,7 @@ def test_record_start_lifts_the_live_cap_and_saves_the_log_as_a_replay(tmp_path,
 
     monkeypatch.setenv("RECORD_HYPS", "3")
     o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.05), h(P | {"warps": 8}, 1.3), h(P | {"gelu": "approx"}, 1.3)),
-             main_iters=4, max_hyps=1, idle_s=5)
+             main_iters=4, max_hyps=1, idle_s=5, directive_wait_s=0.2)
     with TestClient(create(lambda: o, checks={}, autostart=False)) as client:
         assert client.get("/preflight").json()["cap"] == 1
         with client.websocket_connect("/ws") as ws:
