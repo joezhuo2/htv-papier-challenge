@@ -59,7 +59,7 @@ def test_a_spill_drop_that_did_not_pay_off_says_the_mechanism_worked_but_was_not
     h5, h4, h6, h3 = (o.pms[i]["cause"] for i in ("H5", "H4", "H6", "H3"))
     assert "registers fell from 255 to 156 and spills from 28 to 0 words per thread" in h5
     assert "so warps 4 to 8 did relieve register pressure, but that was not the bottleneck" in h5 and "barely moved" not in h5
-    assert "spills from 28 to 0 words per thread" in h4 and "not the bottleneck" in h4 and "barely moved" not in h4
+    assert "spills fell from 28 to 0 words per thread" in h4 and "not the bottleneck" in h4 and "barely moved" not in h4
     assert "not the bottleneck" in h6 and "barely moved" not in h6
     assert "registers and spills barely moved (255 to 255 registers, 28 to 24 spilled words)" in h3  # both deltas small
 

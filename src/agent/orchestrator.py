@@ -215,30 +215,49 @@ def miss_cause(p: Params, base: Params, m: Metrics, parent: Metrics, speedup, pr
             f"{m.n_regs} registers and {m.n_spills} spilled words per thread" if m.n_regs is not None else "no register count recorded")
     per, limit = acc_per_thread(p), ACC_LIMIT[p.acc]
     knobs = [k for k in TILE if getattr(p, k) != getattr(base, k)]
-    if m.n_spills and m.n_spills > (parent.n_spills or 0):
+    effects = [KNOB_EFFECT[(k, 1 if getattr(p, k) > getattr(base, k) else -1)] for k in knobs]
+    dr, ds = moved(parent.n_regs, m.n_regs, 8), moved(parent.n_spills, m.n_spills, 4)
+    if ds and m.n_spills > parent.n_spills:
         why = f"it spills {m.n_spills} words per thread to local memory, so the inner loop waits on memory"
         pivot = f"Keep the accumulator at or under {limit} elements per thread ({per} now): a smaller output tile or more warps."
     elif per > limit:
         why = f"{per} {p.acc.upper()} accumulator elements per thread is over the {limit} that fit in registers"
         pivot = f"Keep the accumulator at or under {limit} elements per thread: a smaller output tile or more warps."
-    elif m.n_regs and parent.n_regs and m.n_regs > 1.15 * parent.n_regs:
+    elif dr and m.n_regs > parent.n_regs:
         why = f"registers per thread rose from {parent.n_regs} to {m.n_regs}, so fewer warps fit on each SM"
         pivot = f"Revert {change(base, p)} and try a change that does not add registers."
+    elif dr or ds:
+        # the counts fell, so the change did what it was meant to; whether that paid off is in the runtime
+        fell = " and ".join(([f"registers fell from {parent.n_regs} to {m.n_regs}"] if dr else [])
+                            + ([f"spills {'' if dr else 'fell '}from {parent.n_spills} to {m.n_spills} words per thread"] if ds else []))
+        if speedup * (1 - (noise or 0.0)) <= 1:  # not clearly faster: the band around the speedup still reaches 1.0
+            why = (f"{fell}, so {change(base, p)} did relieve register pressure, but that was not the bottleneck"
+                   + (f"; what the change costs instead: {'; '.join(effects)}" if effects else ""))
+            pivot = f"Revert {change(base, p)}: register pressure is not what limits this config."
+        else:
+            why = f"{fell}, which likely explains the gain, though it is smaller than predicted"
+            pivot = f"Keep {change(base, p)} and look for the next limit beyond registers."
     else:
-        effects = [KNOB_EFFECT[(k, 1 if getattr(p, k) > getattr(base, k) else -1)] for k in knobs]
-        why = (f"registers and spills barely moved, so the change itself is the likely cause: {'; '.join(effects)}" if effects
-               else f"registers and spills barely moved, so {change(base, p)} itself is the likely cause")
+        counts = (f" ({parent.n_regs} to {m.n_regs} registers, {parent.n_spills} to {m.n_spills} spilled words)"
+                  if m.n_regs is not None and parent.n_regs is not None else "")
+        why = (f"registers and spills barely moved{counts}, so the change itself is the likely cause: {'; '.join(effects)}" if effects
+               else f"registers and spills barely moved{counts}, so {change(base, p)} itself is the likely cause")
         pivot = f"Revert {change(base, p)} and change a knob the ledger has not tried yet."
     if noise is not None:
         gain = (f"It ran at {speedup:.2f}x vs {vs}, inside the +/- {noise * 100:.1f}% noise band around the predicted {pred['min_speedup']:.2f}x, "
                 "so this run cannot tell whether the change clears the prediction")
-        if not (m.n_spills and m.n_spills > (parent.n_spills or 0)) and per <= limit:
+        if not (ds and m.n_spills > parent.n_spills) and per <= limit:
             pivot = f"Rerun {change(base, p)} with more timing rounds, or keep the parent and change a knob the ledger has not tried yet."
     elif speedup >= 1:
         gain = f"It ran at {speedup:.2f}x vs {vs}, faster but short of the predicted {pred['min_speedup']:.2f}x, so the change helps less than claimed"
     else:
         gain = f"It ran at {speedup:.2f}x vs {vs}, slower than what it was timed against"
     return {"cause": f"{gain}. Changed {change(base, p)} ({regs}). Likely cause: {why}.", "pivot": pivot}
+
+
+def moved(a, b, floor):
+    """Whether a register or spill count changed substantially: by more than floor and more than 10% of the larger count."""
+    return a is not None and b is not None and abs(b - a) > max(floor, 0.1 * max(a, b))
 
 
 def assess(h):
