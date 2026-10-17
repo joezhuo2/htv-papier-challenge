@@ -6,7 +6,7 @@ export interface Source { mode: Mode; file?: string; ws?: string }
 
 // the judging build never shows mock numbers: mock requests fall back to the recorded replay
 export const JUDGING = import.meta.env.VITE_JUDGING === '1'
-export const DEFAULT_REPLAY: string = import.meta.env.VITE_REPLAY ?? '/runs/demo.jsonl'
+export const DEFAULT_REPLAY: string = import.meta.env.VITE_REPLAY ?? '/demo/replay.jsonl'
 
 export const parseSource = (search: string, judging = JUDGING): Source => {
   const q = new URLSearchParams(search)
@@ -17,7 +17,7 @@ export const parseSource = (search: string, judging = JUDGING): Source => {
 
 export const fallbackFile = (i: number) => (i === 0 ? DEFAULT_REPLAY : `/runs/fallback${i}.jsonl`)
 
-// the default recorded run: demo.jsonl, then fallback1.jsonl, fallback2.jsonl, ... in order. A file that is missing or fails
+// the default recorded run: the frozen demo/replay.jsonl, then fallback1.jsonl, fallback2.jsonl, ... in order. A file that is missing or fails
 // validation is skipped, and the search stops at the first fallback number that does not exist.
 export const loadDefault = async (): Promise<{ file: string; events: DemoEvent[] }> => {
   const tried: string[] = []

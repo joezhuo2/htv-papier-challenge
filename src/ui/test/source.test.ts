@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { demoScript } from '@contract/demo-script'
 import { compress, loadDefault, parseLog, parseSource } from '../src/source'
 
@@ -35,16 +37,23 @@ describe('source', () => {
     }
 
     it('prefers demo.jsonl', async () => {
-      serve({ '/runs/demo.jsonl': log, '/runs/fallback1.jsonl': log })
-      expect((await loadDefault()).file).toBe('/runs/demo.jsonl')
+      serve({ '/demo/replay.jsonl': log, '/runs/fallback1.jsonl': log })
+      expect((await loadDefault()).file).toBe('/demo/replay.jsonl')
     })
 
     it('falls back to fallback1, then fallback2 when one is invalid, and stops at the first missing number', async () => {
       const fetch = serve({ '/runs/fallback1.jsonl': '{"broken": true}', '/runs/fallback2.jsonl': log, '/runs/fallback4.jsonl': log })
       expect((await loadDefault()).file).toBe('/runs/fallback2.jsonl')
       serve({ '/runs/fallback2.jsonl': log })
-      await expect(loadDefault()).rejects.toThrow('No recorded run could be loaded, tried /runs/demo.jsonl (404), /runs/fallback1.jsonl (404)')
+      await expect(loadDefault()).rejects.toThrow('No recorded run could be loaded, tried /demo/replay.jsonl (404), /runs/fallback1.jsonl (404)')
       expect(fetch).not.toHaveBeenCalledWith('/runs/fallback3.jsonl')
     })
+  })
+  it('parses the frozen demo replays', () => {
+    for (const f of ['replay.jsonl', 'fallback-1541.jsonl']) {
+      const events = parseLog(readFileSync(join(__dirname, '../../../demo', f), 'utf8'))
+      expect(events.at(-1)?.type).toBe('session_finished')
+      expect(events.some(e => e.type === 'final_report')).toBe(true)
+    }
   })
 })

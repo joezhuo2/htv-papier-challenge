@@ -7,12 +7,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { delimiter, dirname, join, normalize, sep } from 'node:path'
 
 const contract = fileURLToPath(new URL('../contract', import.meta.url))
-const runs = fileURLToPath(new URL('../../runs', import.meta.url))
+const repo = fileURLToPath(new URL('../..', import.meta.url))
 
-// serves recorded JSONL logs from the repo runs/ folder at /runs/..., in dev and in vite preview (the judging build)
-const runsHandler = (req: IncomingMessage, res: ServerResponse) => {
-  const path = normalize(join(runs, decodeURIComponent((req.url ?? '').split('?')[0])))
-  if (!path.startsWith(runs + sep) || !existsSync(path) || !statSync(path).isFile()) {
+// serves recorded JSONL logs from the repo runs/ (local, gitignored) and demo/ (frozen, committed) folders, in dev and in vite preview
+const serveDir = (name: string) => (req: IncomingMessage, res: ServerResponse) => {
+  const dir = join(repo, name)
+  const path = normalize(join(dir, decodeURIComponent((req.url ?? '').split('?')[0])))
+  if (!path.startsWith(dir + sep) || !existsSync(path) || !statSync(path).isFile()) {
     res.statusCode = 404
     return res.end('not found')
   }
@@ -23,10 +24,10 @@ const runsHandler = (req: IncomingMessage, res: ServerResponse) => {
 const serveRuns = (): Plugin => ({
   name: 'serve-runs',
   configureServer(server) {
-    server.middlewares.use('/runs', runsHandler)
+    for (const d of ['runs', 'demo']) server.middlewares.use(`/${d}`, serveDir(d))
   },
   configurePreviewServer(server) {
-    server.middlewares.use('/runs', runsHandler)
+    for (const d of ['runs', 'demo']) server.middlewares.use(`/${d}`, serveDir(d))
   },
 })
 
