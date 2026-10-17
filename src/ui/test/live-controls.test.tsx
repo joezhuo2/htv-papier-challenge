@@ -53,6 +53,11 @@ describe('live controls', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     fireEvent.click(screen.getByRole('button', { name: 'Start recording' }))
     expect(sent()).toEqual([{ type: 'start', record: true }])
+    push({ t: 0, type: 'agent_log', text: 'Measuring baselines: PyTorch eager and the naive Triton kernel.' })
+    expect((screen.getByRole('button', { name: 'Start session' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Start recording' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Start session' }))
+    expect(sent()).toHaveLength(1)
     push(recorded[0], { t: 100, type: 'agent_log', text: 'Recording mode: the full loop for up to 8 hypotheses or until Stop.' })
     expect(screen.getByTestId('mode-pill').textContent).toContain('live, recording')
   })
@@ -102,6 +107,7 @@ describe('live controls', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
     expect(screen.getByLabelText('elapsed').textContent).toBe('0:04')
     expect(screen.getByTestId('starting').textContent).toContain('Found no NVIDIA driver')
+    expect((screen.getByRole('button', { name: 'Start session' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('shows a timeout as a visible state with retry and stop, cleared by progress', () => {

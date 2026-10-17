@@ -81,10 +81,12 @@ class Orchestrator:
     """engine(spec, run_id) -> Metrics runs one experiment (harness.runner.run in production).
     ask(messages, model, tag) -> str is the LLM. fast and strong are model ids.
     context(query) -> [{id, title, excerpt}] reads Papiers, optional. headroom is harness.noise.headroom(), quoted in the prompt.
-    record marks a recording session: uncapped by the live demo cap, it saves its log as a replay."""
+    record marks a recording session (set with set_record): uncapped by the live demo cap, it never finishes on idle, it waits
+    directive_wait_s for a lens directive whenever nothing is runnable and then continues on main as a flagged default, and it
+    saves its log as a replay."""
 
     def __init__(self, engine, ask, log: Log, session: str, fast: str, strong: str, band: float,
-                 main_iters=2, branch_iters=3, idle_s=120.0, context=None, help_deadline_s=45.0, max_hyps=None, retry_s=30.0, headroom=None):
+                 main_iters=2, branch_iters=3, idle_s=120.0, context=None, help_deadline_s=45.0, max_hyps=None, retry_s=30.0, headroom=None, directive_wait_s=90.0):
         self.engine, self.ask, self.log, self.session = engine, ask, log, session
         self.fast, self.strong, self.band = fast, strong, band
         self.main_iters, self.branch_iters, self.idle_s = main_iters, branch_iters, idle_s
@@ -101,6 +103,9 @@ class Orchestrator:
         self.max_hyps, self.retry_s = max_hyps, retry_s
         self.headroom = headroom
         self.record = False
+        self.directive_wait_s = directive_wait_s
+        self.defaulted: set[str] = set()  # branches reopened by the no-directive default, flagged on their hypotheses
+        self.waiting = False
         self.retry = threading.Event()
         self.helps: dict[str, dict] = {}  # id -> {help, branch, t, answered, expired}
         self.hints: dict[str, tuple[str, str]] = {}  # branch -> (suggestion, note for the hypothesis)
@@ -125,6 +130,10 @@ class Orchestrator:
         self.stopped = True
         self.retry.set()
 
+    def set_record(self, max_hyps):
+        """Recording mode: the main branch stops after H0 so the session waits for a lens directive."""
+        self.record, self.max_hyps, self.main_iters = True, max_hyps, 1
+
     def capped(self):
         return self.max_hyps is not None and len(self.hyps) >= self.max_hyps
 
@@ -138,9 +147,22 @@ class Orchestrator:
             self.check_deadlines()
             b = self.next_branch()
             if b:
+                self.waiting = False
                 self.iterate(b)
                 idle = time.monotonic()
-            elif (self.capped() or time.monotonic() - idle > self.idle_s) and not self.pending():
+            elif self.capped() and not self.pending():
+                break
+            elif self.record:
+                if self.pending() or self.capped():
+                    idle = time.monotonic()
+                elif not self.waiting:
+                    self.waiting = True
+                    self.log.emit("agent_log", text=f"Waiting for a lens directive. With none in {self.directive_wait_s:.0f} s I continue on main with the default.")
+                elif time.monotonic() - idle > self.directive_wait_s:
+                    self.proceed_default()
+                    idle = time.monotonic()
+                time.sleep(0.1)
+            elif time.monotonic() - idle > self.idle_s and not self.pending():
                 break
             else:
                 time.sleep(0.1)
@@ -184,6 +206,16 @@ class Orchestrator:
             self.log.emit("agent_log", text=f"Recording saved as a replay: open ?mode=replay&file=/runs/{self.session}/events.jsonl")
         self.log.emit("session_finished", ledger=ledger, best=out)
 
+    def proceed_default(self):
+        main = self.branches["main"]
+        self.defaulted.add(main.id)
+        self.extra[main.id] = self.extra.get(main.id, 0) + 2
+        main.misses = 0
+        self.log.emit("agent_log", text=f"No lens directive in {self.directive_wait_s:.0f} s, so I am proceeding on the default assumption: two more tuning "
+                                        "iterations on main under the default 1e-3 bound. These hypotheses are flagged as default, not human directed.")
+        self.reopen(main)
+        self.waiting = False
+
     # ---- commands ----
 
     def drain(self):
@@ -209,6 +241,7 @@ class Orchestrator:
             self.log.emit("agent_log", text=f"Ignored a {lens} directive ({why}): {text[:80]}")
             return
         d = {"id": f"d{len(self.directives) + 1}", "lens": lens, "text": text, **hyp.directive(lens, text)}
+        self.defaulted.clear()
         self.directives.append(d | {"at": now})
         self.log.emit("directive_added", directive=d)
         if lens == "speed":
@@ -526,6 +559,9 @@ class Orchestrator:
     def new_hyp(self, b, claim, prediction, params, note):
         # the error bound in the prediction is the lens bound, the agent cannot loosen it
         bound = self.bounds(b.lens)
+        if b.id in self.defaulted:
+            flag = "flagged: default continuation, no lens directive arrived"
+            note = f"{note} ({flag})" if note else flag.capitalize()
         return Hyp(f"H{len(self.hyps)}", b.id, claim, prediction | {"max_error": bound["standard"], "bound": bound}, params, note)
 
     def measure(self, h: Hyp, parent: Params | None):

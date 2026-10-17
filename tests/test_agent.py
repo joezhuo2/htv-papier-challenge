@@ -737,3 +737,28 @@ def test_a_baseline_that_cannot_run_is_reported_instead_of_crashing(tmp_path):
     assert of(o, "agent_log")[-1]["text"] == ("Cannot start: the eager baseline did not run (RuntimeError: Found no NVIDIA driver on your system.). "
                                               "Check the GPU, then press New session.")
     assert of(o, "agent_log")[0]["t"] < 1000
+
+
+def test_recording_waits_after_h0_then_continues_on_main_as_a_flagged_default(tmp_path):
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.3), h(P | {"warps": 8}, 1.3), default="no json"),
+             main_iters=2, directive_wait_s=0.3, context=lambda q: [{"id": "cnv_1", "title": "t", "excerpt": "e"}])
+    o.set_record(3)
+    o.run()
+    logs = [e["text"] for e in of(o, "agent_log")]
+    hyps = [e["hypothesis"] for e in of(o, "hypothesis_proposed")]
+    assert len(hyps) == 3 and types(o)[-1] == "session_finished"
+    waited = next(i for i, e in enumerate(o.log.events) if e["type"] == "agent_log" and e["text"].startswith("Waiting for a lens directive"))
+    assert o.log.events.index(next(e for e in o.log.events if e["type"] == "verdict")) < waited
+    assert any("proceeding on the default assumption" in t for t in logs)
+    assert "flagged: default continuation" not in hyps[0].get("note", "")
+    assert all(x["note"].endswith("(flagged: default continuation, no lens directive arrived)") and "Papiers note cnv_1 " in x["note"] for x in hyps[1:])
+
+
+def test_recording_runs_the_speed_branch_after_a_directive_and_never_finishes_on_idle(tmp_path):
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.3), default="no json"), directive_wait_s=30, idle_s=0.1)
+    o.set_record(3)
+    run_with(o, [(1, "speed", "Push throughput harder.")])
+    hyps = [e["hypothesis"] for e in of(o, "hypothesis_proposed")]
+    assert [x["branch"] for x in hyps] == ["main", "speed", "speed"]
+    assert hyps[2]["params"]["acc"] == "fp16"
+    assert not any("proceeding on the default assumption" in e["text"] for e in of(o, "agent_log"))

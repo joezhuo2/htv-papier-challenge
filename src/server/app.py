@@ -75,7 +75,7 @@ def build():
     cap = os.environ.get("MAX_HYPS", "1")
     return session.new(main_iters=int(os.environ.get("MAIN_ITERS", "2")), branch_iters=int(os.environ.get("BRANCH_ITERS", "3")),
                        idle_s=float(os.environ.get("IDLE_S", "600")), max_hyps=int(cap) if cap else None,
-                       help_deadline_s=float(os.environ.get("HELP_DEADLINE_S", "45")))
+                       help_deadline_s=float(os.environ.get("HELP_DEADLINE_S", "45")), directive_wait_s=float(os.environ.get("DIRECTIVE_WAIT_S", "90")))
 
 
 def create(factory=None, checks=CHECKS, autostart=None):
@@ -89,7 +89,7 @@ def create(factory=None, checks=CHECKS, autostart=None):
         if state.get("thread"):
             return
         if record:
-            state["orch"].record, state["orch"].max_hyps = True, record_hyps
+            state["orch"].set_record(record_hyps)
         state["thread"] = threading.Thread(target=state["orch"].run, daemon=True)
         state["thread"].start()
 

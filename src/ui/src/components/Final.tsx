@@ -63,6 +63,10 @@ export function Preflight({ onStart, fallback, log }: { onStart: (record: boolea
   const failed = checks && Object.values(checks).some(c => !c.ok)
   const latest = log.at(-1)
   const blocked = latest?.text.startsWith('Cannot start')
+  // one start per session: locked from the click (or the first agent event) until the session starts, unless it cannot start
+  const [clicked, setClicked] = useState(false)
+  const locked = (clicked || log.length > 0) && !blocked
+  const start = (record: boolean) => { setClicked(true); onStart(record) }
   return (
     <article className="card focus" data-testid="preflight" style={{ maxWidth: 560 }}>
       <h2>Pre-flight</h2>
@@ -78,18 +82,19 @@ export function Preflight({ onStart, fallback, log }: { onStart: (record: boolea
       )}
       {latest ? <p className={`small${blocked ? ' strong' : ' muted'}`} role={blocked ? 'alert' : 'status'} data-testid="starting">{latest.text}</p> : null}
       <div className="inline">
-        <button className="primary" onClick={() => onStart(false)} disabled={!checks} data-testid="start">Start session</button>
+        <button className="primary" onClick={() => start(false)} disabled={!checks || locked} data-testid="start">Start session</button>
         {caps?.cap ? <span className="small muted">table demo, capped at {plural(caps.cap)}</span> : null}
         <a href={fallback} className={failed || error ? 'strong' : 'muted'}>Fall back to the recorded run</a>
       </div>
       <hr className="divider" />
       <h3>Record a replay</h3>
       <p className="small muted">
-        Not the table demo. Runs the full loop for up to {plural(caps?.record_cap ?? 8)} or until you press Stop, accepts directives and help
-        answers at any point, and saves the whole event log as a replay under runs/sessions.
+        Not the table demo. Runs H0, then waits for your lens directive (continuing on main as a flagged default if none arrives in time),
+        and keeps going until {plural(caps?.record_cap ?? 8)} or Stop. Directives and help answers are accepted at any point, and the whole
+        event log is saved as a replay under runs/sessions.
       </p>
       <div className="inline">
-        <button onClick={() => onStart(true)} disabled={!checks} data-testid="record">Start recording</button>
+        <button onClick={() => start(true)} disabled={!checks || locked} data-testid="record">Start recording</button>
       </div>
     </article>
   )
