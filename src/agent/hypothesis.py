@@ -3,7 +3,7 @@
 import json
 import re
 
-from harness.kernel import ACC, GELU, Params
+from harness.kernel import ACC, GELU, SMEM_LIMIT, Params, smem_bytes
 
 SYSTEM = f"""You are a GPU kernel research agent tuning a fused Triton kernel computing gelu(x @ w + b) in FP16 on an RTX 5060 laptop GPU (Blackwell, 8 GB). Shape M = N = K = 2048.
 You may only edit these parameters:
@@ -12,7 +12,8 @@ You may only edit these parameters:
 - stages: 1 to 6
 - acc: one of {list(ACC)} (accumulation dtype)
 - gelu: one of {list(GELU)} (approx is the tanh formulation)
-Shared memory is limited to about 100 KB per block.
+Shared memory: a config needs (stages - 1) * (block_m * block_k + block_k * block_n) * 2 bytes and must stay at or under {SMEM_LIMIT} bytes.
+For example 128x256x64 with 4 stages needs 147456 bytes and does not fit, 128x128x64 with 4 stages needs 98304 and fits.
 Before any run, state a falsifiable hypothesis with thresholds. The harness, not you, decides whether it held.
 Never propose a configuration listed as already tried.
 min_speedup is the ratio start latency / new latency you expect. Against "parent_best" a realistic value is between 1.02 and 2.0. Against "naive" it is between 1.1 and 10.
@@ -73,6 +74,8 @@ def parse(text):
         params = Params(**h.get("params", {}))
     except (TypeError, ValueError) as e:
         return None, f"invalid params: {e}"
+    if smem_bytes(params) > SMEM_LIMIT:
+        return None, f"the config needs {smem_bytes(params)} bytes of shared memory, over the {SMEM_LIMIT} byte limit, use smaller tiles or fewer stages"
     return {"claim": h["claim"], "explanation": h.get("explanation", ""), "prediction": {k: p[k] for k in ("min_speedup", "vs", "max_error")},
             "params": params}, None
 

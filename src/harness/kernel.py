@@ -7,6 +7,13 @@ import triton.language as tl
 ACC = ("fp32", "fp16")
 GELU = ("exact", "approx")
 GROUP_M = 8
+SMEM_LIMIT = 101376  # bytes of shared memory per block on the RTX 5060 (Triton's reported hardware limit)
+
+
+def smem_bytes(p):
+    """Shared memory the pipelined FP16 tiles need, (stages - 1) buffers of an x tile and a w tile. Matches Triton's
+    OutOfResources figure for every logged failure, for example 147456 for 128x256x64 with 4 stages."""
+    return (p.stages - 1) * (p.block_m * p.block_k + p.block_k * p.block_n) * 2
 
 
 @dataclass(frozen=True)
