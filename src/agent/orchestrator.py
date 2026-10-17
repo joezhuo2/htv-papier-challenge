@@ -144,16 +144,6 @@ def ruled_out(p: Params, base: Params):
     return ", ".join(setting(p, k) for k in keys) or f"the configuration {params_text(p)}"
 
 
-def hybrid_guard(p: Params, area):
-    """Why a hybrid candidate would overflow the registers or shared memory, or None when it is within bounds."""
-    per, limit = acc_per_thread(p), ACC_LIMIT[p.acc]
-    if p.block_m * p.block_n > area:
-        return f"has a {p.block_m}x{p.block_n} tile ({p.block_m * p.block_n} elements) over the larger parent's {area}"
-    if per > limit:
-        return f"puts {per} {p.acc.upper()} accumulator elements on each of {p.warps * 32} threads, over {limit}"
-    return None
-
-
 def failure_cause(p: Params, m: Metrics):
     """Templated post-mortem for a run that did not compile or run, with the shared memory arithmetic when Triton ran out of it."""
     err = m.error or ""
@@ -416,7 +406,9 @@ class Orchestrator:
                 if busy:
                     idle = time.monotonic()
                 if self.capped():
-                    break  # pending help deadlines are not waited out, finish reports them as unanswered
+                    self.maybe_hybrid()
+                    if not (self.hybrid and self.hybrid["state"] == "proposed"):
+                        break  # help deadlines are not waited out, but a proposed hybrid waits for approval or its deadline
                 if self.record:
                     if self.base_capped():
                         idle = time.monotonic()
@@ -1217,47 +1209,41 @@ class Orchestrator:
 
     # ---- hybrid ----
 
+    def knobs(self, h):
+        """The parameters h changed from what it was timed against."""
+        base = self.baseline(h)[0]
+        return [k for k in h.params.dict() if getattr(h.params, k) != getattr(base, k)]
+
     def maybe_hybrid(self):
-        """After a lens conflict, proposes merging the fastest correct run of each lens: the parameters each lens changed from the
-        common start, with the Precision lens winning where both changed the same one. The union of two tile changes can overflow
-        the registers, so a candidate must keep the tile area within the larger parent's and the accumulator per thread within
-        ACC_LIMIT. When the full union does not, the hybrid keeps one parent's tile shape and takes the merged dtype and GELU.
-        Approval is the presenter's."""
-        if self.hybrid or not self.conflicts or not any(d["lens"] == "precision" for d in self.directives):
+        """Proposes, once, the best confirmed config combined with the best confirmed single-knob change from any other branch (the
+        largest measured gain over its parent). It does not need the lenses to disagree: once every branch shares a bound, the
+        question is whether two confirmed improvements add up. Skipped, with the reason logged once, when the accumulator guard
+        fails or the combination already ran. Approval is the presenter's, and neither the proposal nor its run counts toward the cap."""
+        best = self.best_run()
+        if self.hybrid or not best:
             return
-        lens_best = {}
-        for lens in ("precision", "speed"):
-            runs = self.correct_runs([b.id for b in self.branches.values() if b.lens == lens])
-            if not runs:
-                return
-            lens_best[lens] = runs[0]
-        pb, sb = lens_best["precision"], lens_best["speed"]
-        base = self.start_point("main")[0]
-        union = Params(**{k: getattr(pb.params, k) if getattr(pb.params, k) != getattr(base, k) else getattr(sb.params, k) for k in base.dict()})
-        faster, slower = sorted((pb, sb), key=lambda h: h.metrics.latency_ms)
-        area = max(x.params.block_m * x.params.block_n for x in (pb, sb))
-        rejects = []
-        for src in (None, faster, slower):
-            p = fit_stages(union if src is None else replace(union, **{k: getattr(src.params, k) for k in TILE}))
-            same = next((x for x in (pb, sb) if x.params == p), None)
-            ran = next((x for x in self.hyps if x.params == p), None)
-            why = hybrid_guard(p, area) or (f"is {same.id}'s own configuration" if same else f"was already run as {ran.id}" if ran else None)
-            if not why:
-                break
-            rejects.append(f"The full union, {params_text(p)}, {why}" if src is None else f"The tile shape of {src.branch} ({src.id}) gives {params_text(p)}, which {why}")
-        else:
-            # logged once per distinct reason, since this runs after every iteration
-            text = f"No hybrid of {pb.branch} ({pb.id}) and {sb.branch} ({sb.id}) to propose: {'. '.join(rejects)}."
-            if text != self.skipped:
+        donors = [h for h in self.hyps if h.branch != best.branch and h.judgment and h.judgment.verdict == "confirmed" and not h.judgment.provisional
+                  and h.ref == "parent" and len(ks := self.knobs(h)) == 1 and getattr(best.params, ks[0]) != getattr(h.params, ks[0])]
+        if not donors:
+            return
+        donor = max(donors, key=lambda h: h.speedup)
+        k = self.knobs(donor)[0]
+        p = fit_stages(replace(best.params, **{k: getattr(donor.params, k)}))
+        per, limit = acc_per_thread(p), ACC_LIMIT[p.acc]
+        ran = next((x for x in self.hyps if x.params == p), None)
+        pair = f"{best.id} on {best.branch} ({params_text(best.params)}) with {setting(donor.params, k)} from {donor.id} on {donor.branch}"
+        why = (f"{params_text(p)} puts {per} {p.acc.upper()} accumulator elements on each of {p.warps * 32} threads, over {limit}" if per > limit
+               else f"{params_text(p)} already ran as {ran.id} on {ran.branch}" if ran else None)
+        if why:
+            text = f"No hybrid of {pair}: {why}."
+            if text != self.skipped:  # logged once per distinct reason, since this runs after every iteration
                 self.skipped = text
                 self.log.emit("agent_log", text=text)
             return
-        keep = f" Keeping the tile shape of {src.branch} ({src.id}) instead." if src else ""
-        text = (f"Combine {change(base, sb.params)} from {sb.branch} ({sb.id}) with {change(base, pb.params)} from {pb.branch} ({pb.id}). "
-                + (f"{'. '.join(rejects)}.{keep} " if rejects else "")
-                + f"Candidate: {params_text(p)}, {acc_per_thread(p)} accumulator elements per thread. "
-                "The expected gain is small, so the result shows whether the two lenses' changes add up.")
-        self.hybrid = {"branches": [pb.branch, sb.branch], "params": p, "base": faster.params, "faster": faster, "text": text,
+        text = (f"Combine the best confirmed config, {pair}, the best confirmed single-knob change on another branch "
+                f"({donor.speedup:.2f}x over its parent). Candidate: {params_text(p)}, {per} accumulator elements per thread. "
+                "It runs outside the hypothesis cap, and the result shows whether the two changes add up.")
+        self.hybrid = {"branches": [best.branch, donor.branch], "params": p, "base": best.params, "faster": best, "text": text,
                        "t": self.log.clock(), "state": "proposed"}
         self.log.emit("hybrid_proposed", branches=self.hybrid["branches"], text=text)
 

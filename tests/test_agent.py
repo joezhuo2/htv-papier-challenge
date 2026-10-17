@@ -258,28 +258,71 @@ def test_failure_path_fp16_provisional_under_speed_then_rejected_by_precision(tm
     assert_contract(o.log.events)
 
 
-def test_conflict_then_hybrid_proposal_approval_and_merge_run(tmp_path):
-    merged = P | {"stages": 4, "gelu": "approx"}
-    engine = Engine(TABLE | {json.dumps(merged, sort_keys=True): met(0.600, err=6.9e-4, adv=7.2e-4)})
-    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"gelu": "approx"}, 1.02), h(P | {"stages": 4}, 1.02), default="no json"),
-             engine=engine, main_iters=1, branch_iters=1, help_deadline_s=5)
+def test_a_converged_session_proposes_a_hybrid_at_the_cap_and_runs_it_outside_the_cap(tmp_path):
+    w8, approx = P | {"warps": 8}, P | {"gelu": "approx"}
+    merged = w8 | {"gelu": "approx"}
+    engine = Engine(TABLE | {json.dumps(w8, sort_keys=True): met(0.600), json.dumps(approx, sort_keys=True): met(0.610, err=6.9e-4, adv=7.2e-4),
+                             json.dumps(merged, sort_keys=True): met(0.550, err=6.9e-4, adv=7.2e-4)})
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(approx, 1.02), h(w8, 1.02), default="no json"), engine=engine, main_iters=1, branch_iters=3,
+             help_deadline_s=5, max_hyps=4)
     proposed = lambda: bool(of(o, "hybrid_proposed"))
-    drive(o, [(judged(o, 1), SPEED), (judged(o, 2), {"type": "add_directive", "lens": "precision", "text": "Max error under 1e-3 on both batches."}),
-              (proposed, {"type": "approve_hybrid", "branches": ["prec", "speed2"]})])
-    flip = [(e["verdict"], e["provisional"]) for e in of(o, "verdict") if e["hypothesis"] == "H1"]
-    assert flip == [("confirmed", True), ("rejected", False)]
-    assert of(o, "conflict_detected")[0]["directives"] == ["d1", "d2"]
+    drive(o, [(judged(o, 1), {"type": "add_directive", "lens": "precision", "text": "Max error under 1e-3 on both batches."}),
+              (judged(o, 1), SPEED), (proposed, {"type": "approve_hybrid", "branches": ["speed2", "prec"]})])
+    assert not of(o, "conflict_detected")  # the lenses never disagreed
     hy = of(o, "hybrid_proposed")[0]
-    assert hy["branches"] == ["prec", "speed2"] and "stages 3 to 4" in hy["text"] and "gelu exact to approx" in hy["text"]
-    assert types(o).index("conflict_detected") < types(o).index("hybrid_proposed")
-    merge = next(e["branch"] for e in of(o, "branch_created") if e["branch"]["id"] == "merge")
-    assert merge["parents"] == ["prec", "speed2"] and merge["label"] == "Hybrid"
+    assert hy["branches"] == ["speed2", "prec"] and "best confirmed config, H3 on speed2" in hy["text"] and "approx GELU from H1 on prec" in hy["text"]
     run = next(e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["branch"] == "merge")
-    assert run["params"] == merged
-    assert next(e for e in of(o, "verdict") if e["hypothesis"] == run["id"])["verdict"] == "confirmed"
-    statuses = {(e["branch"], e["status"]) for e in of(o, "branch_status")}
-    assert {("prec", "merged"), ("speed2", "merged"), ("merge", "done")} <= statuses
+    assert run["params"] == merged and run["id"] == "H4" and o.hyps[-1].bonus and sum(not x.bonus for x in o.hyps) == 4
+    assert next(e for e in of(o, "verdict") if e["hypothesis"] == "H4")["verdict"] == "confirmed"
+    assert {("speed2", "merged"), ("prec", "merged"), ("merge", "done")} <= {(e["branch"], e["status"]) for e in of(o, "branch_status")}
     assert_contract(o.log.events)
+
+
+def hybrid_state(tmp_path, donor):
+    """H0 on main, the best confirmed H1 on prec (256x128x64, 8 warps, 3 stages), and a confirmed single-knob donor H2 on speed2."""
+    from agent.orchestrator import Branch, Hyp
+    from agent.verdict import Judgment
+    from harness.kernel import Params
+    o = make(tmp_path, Asker())
+    o.naive = met(2.0)
+    for b in (Branch("main", [], "Baseline", "both"), Branch("prec", ["main"], "Precision lens", "precision"), Branch("speed2", ["main"], "Speed lens", "speed")):
+        o.branches[b.id] = b
+    base = Params(128, 128, 64, 4, 4)
+    for i, (bid, p, lat) in enumerate([("main", base, 0.78), ("prec", Params(256, 128, 64, 8, 3), 0.60), ("speed2", donor, 0.74)]):
+        x = Hyp(f"H{i}", bid, "c", {"min_speedup": 1.02, "vs": "parent_best", "max_error": 1e-3}, p, metrics=met(lat),
+                speedup=0.78 / lat if i else 2.5, ref="parent" if i else "naive", base=base if i else None)
+        x.judgment = Judgment("confirmed", False, "Prediction holds.")
+        o.hyps.append(x)
+    return o
+
+
+def test_the_hybrid_is_the_best_config_plus_the_best_single_knob_change_from_another_branch(tmp_path):
+    from harness.kernel import Params
+    o = hybrid_state(tmp_path, Params(128, 128, 64, 4, 4, gelu="approx"))
+    o.maybe_hybrid()
+    assert o.hybrid["params"] == Params(256, 128, 64, 8, 3, gelu="approx") and o.hybrid["branches"] == ["prec", "speed2"]
+    assert of(o, "hybrid_proposed")[0]["text"].startswith("Combine the best confirmed config, H1 on prec (256x128x64 tiles, 8 warps, 3 stages, "
+                                                          "FP32 accumulation, exact GELU) with approx GELU from H2 on speed2")
+
+
+def test_a_hybrid_over_the_accumulator_guard_is_skipped_and_explained_once(tmp_path):
+    from harness.kernel import Params
+    o = hybrid_state(tmp_path, Params(128, 256, 64, 4, 4))
+    o.maybe_hybrid()
+    o.maybe_hybrid()
+    assert o.hybrid is None and not of(o, "hybrid_proposed")
+    logs = [e["text"] for e in of(o, "agent_log") if e["text"].startswith("No hybrid")]
+    assert logs == [("No hybrid of H1 on prec (256x128x64 tiles, 8 warps, 3 stages, FP32 accumulation, exact GELU) with block_n 256 from H2 on speed2: "
+                    "256x256x64 tiles, 8 warps, 2 stages, FP32 accumulation, exact GELU puts 256 FP32 accumulator elements on each of 256 threads, over 128.")]
+
+
+def test_a_hybrid_that_already_ran_is_not_proposed(tmp_path):
+    from harness.kernel import Params
+    o = hybrid_state(tmp_path, Params(128, 128, 64, 4, 4, gelu="approx"))
+    from agent.orchestrator import Hyp
+    o.hyps.append(Hyp("H3", "main", "c", {}, Params(256, 128, 64, 8, 3, gelu="approx"), metrics=met(0.61)))
+    o.maybe_hybrid()
+    assert o.hybrid is None and "already ran as H3 on main" in of(o, "agent_log")[-1]["text"]
 
 
 def test_harness_variant_tests_fp16_when_the_agent_avoids_it(tmp_path):
@@ -939,22 +982,11 @@ def lens_state(tmp_path):
     return o
 
 
-def test_hybrid_never_takes_a_tile_union_that_overflows_the_registers(tmp_path):
-    from harness.kernel import acc_per_thread
-    o = lens_state(tmp_path)
-    o.maybe_hybrid()
-    p = o.hybrid["params"]
-    assert (p.block_m, p.block_n) != (256, 256) and p.block_m * p.block_n <= 256 * 128 and acc_per_thread(p) <= 128
-    assert p.gelu == "approx" and (p.block_m, p.block_n, p.warps) == (256, 128, 8)
-    text = of(o, "hybrid_proposed")[0]["text"]
-    assert "256x256" in text and "65536 elements" in text and "Keeping the tile shape of prec (H1)" in text
-
-
 def test_a_run_far_slower_than_its_parent_gets_a_register_post_mortem(tmp_path):
-    merged = P | {"stages": 4, "gelu": "approx"}
+    big = P | {"block_n": 256, "warps": 8}
     slow = Metrics.from_dict(met(6.4, err=6.9e-4, adv=7.2e-4).dict() | {"n_regs": 40, "n_spills": 1492})
-    faster = json.dumps(P | {"stages": 4}, sort_keys=True)
-    table = TABLE | {json.dumps(merged, sort_keys=True): slow, faster: Metrics.from_dict(TABLE[faster].dict() | {"n_regs": 255, "n_spills": 24})}
+    key = json.dumps(P, sort_keys=True)
+    table = TABLE | {json.dumps(big, sort_keys=True): slow, key: Metrics.from_dict(TABLE[key].dict() | {"n_regs": 255, "n_spills": 24})}
 
     class Window(Engine):
         def __call__(self, spec, run_id):
@@ -963,16 +995,12 @@ def test_a_run_far_slower_than_its_parent_gets_a_register_post_mortem(tmp_path):
                 m.ref_ms = {k: self.one(r).latency_ms for k, r in spec["refs"].items()}
             return m
 
-    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"gelu": "approx"}, 1.02), h(P | {"stages": 4}, 1.02), default="no json"),
-             engine=Window(table), main_iters=1, branch_iters=1, help_deadline_s=5)
-    proposed = lambda: bool(of(o, "hybrid_proposed"))
-    drive(o, [(judged(o, 1), SPEED), (judged(o, 2), {"type": "add_directive", "lens": "precision", "text": "Max error under 1e-3 on both batches."}),
-              (proposed, {"type": "approve_hybrid", "branches": ["prec", "speed2"]})])
-    run = next(e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["branch"] == "merge")
-    pm = next(e["post_mortem"] for e in of(o, "post_mortem") if e["post_mortem"]["hypothesis"] == run["id"])
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(big, 1.05), default="no json"), engine=Window(table), main_iters=2)
+    o.run()
+    pm = next(e["post_mortem"] for e in of(o, "post_mortem") if e["post_mortem"]["hypothesis"] == "H1")
     assert "40 registers per thread" in pm["cause"] and "1492 32-bit words" in pm["cause"] and "255 registers and 24 spilled words for the parent" in pm["cause"]
     assert "128 elements per thread, within the 128 limit" in pm["cause"] and "6.400 ms" in pm["observed"] and pm["sweep"] == []
-    assert any(i["kind"] == "negative_result" and i["file"] == f"exports/{run['id']}-negative-result.md" for e in of(o, "findings_exported") for i in e["items"])
+    assert any(i["kind"] == "negative_result" and i["file"] == "exports/H1-negative-result.md" for e in of(o, "findings_exported") for i in e["items"])
     assert_contract(o.log.events)
 
 
@@ -1199,16 +1227,6 @@ def recorded_state(tmp_path, **kw):
     return o
 
 
-def test_a_hybrid_says_why_it_skips_a_union_that_is_one_parents_own_config(tmp_path):
-    from harness.kernel import Params
-    o = recorded_state(tmp_path)
-    o.maybe_hybrid()
-    assert o.hybrid["params"] == Params(128, 128, 64, 8, 4, gelu="approx")
-    text = of(o, "hybrid_proposed")[0]["text"]
-    assert "The full union, 128x256x64 tiles, 8 warps, 3 stages, FP32 accumulation, approx GELU, is H2's own configuration" in text
-    assert "Keeping the tile shape of prec (H1) instead." in text
-
-
 def test_a_summary_is_measured_against_the_base_the_run_was_timed_against(tmp_path):
     from agent.orchestrator import Hyp
     o = recorded_state(tmp_path)
@@ -1273,15 +1291,6 @@ def converged_state(tmp_path):
 def replace_gelu(p):
     from dataclasses import replace
     return replace(p, gelu="approx")
-
-
-def test_a_hybrid_that_cannot_be_proposed_is_explained_once(tmp_path):
-    o = converged_state(tmp_path)
-    o.maybe_hybrid()
-    o.maybe_hybrid()
-    assert o.hybrid is None and not of(o, "hybrid_proposed")
-    logs = [e["text"] for e in of(o, "agent_log") if e["text"].startswith("No hybrid")]
-    assert len(logs) == 1 and "prec (H1) and speed2 (H2)" in logs[0] and "is H2's own configuration" in logs[0] and "is H1's own configuration" in logs[0]
 
 
 def test_a_retest_refusal_says_which_run_already_had_the_config(tmp_path):
