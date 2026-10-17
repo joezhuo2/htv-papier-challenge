@@ -156,6 +156,15 @@ export interface Report {
   best: { run: string; vs_naive: number; vs_eager: number }
 }
 
+// computed by the agent from the log at the end of a session, sent just before session_finished
+export interface FinalReport {
+  best: { run: string; hypothesis: string; branch: string; params: Params; latency_ms: number; vs_naive: number; vs_eager: number } | null
+  ruled_out: string[]
+  next: string[]
+  human: string[] // decisions only a lens owner can make: unanswered requests, an unapproved hybrid, a lens conflict
+  hunches: { directive: string; lens: Lens; text: string; outcome: string }[] // one per typed hunch, with its measured outcome or why it did not run
+}
+
 export interface LedgerEntry {
   hypothesis: string
   verdict: Verdict
@@ -189,6 +198,7 @@ export type DemoEvent =
   | Ev<'findings_exported', { items: { kind: 'summary' | 'negative_result' | 'ledger' | 'answer'; title: string; file: string }[] }>
   | Ev<'report_ready', { report: Report }>
   | Ev<'hybrid_proposed', { branches: string[]; text: string }>
+  | Ev<'final_report', { report: FinalReport }>
   | Ev<'session_finished', { ledger: LedgerEntry[]; best: Report['best'] }>
   // a visible failure state: the loop waits for a retry command (or retries by itself after retry_in_s) instead of looking frozen
   | Ev<'agent_error', { kind: 'llm_timeout' | 'llm_error' | 'harness_timeout'; text: string; branch?: string; retry_in_s?: number }>

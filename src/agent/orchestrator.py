@@ -491,6 +491,7 @@ class Orchestrator:
         for b in self.branches.values():
             if b.status in ("running", "waiting_on_human"):
                 self.close(b, "done")
+        self.log.emit("final_report", report=self.final_report(best, out))
         replay = self.log.path.with_name("replay.jsonl")
         self.note(f"replay: ?mode=replay&file=/runs/{self.session}/replay.jsonl (written after session_finished)")
         self.log.emit("session_finished", ledger=ledger, best=out)
@@ -498,6 +499,41 @@ class Orchestrator:
         tmp = replay.with_suffix(".tmp")
         tmp.write_text("".join(json.dumps(e) + "\n" for e in self.log.events))
         tmp.replace(replay)
+
+    def final_report(self, best, out):
+        """Computed from the log: the best confirmed run, what was ruled out, what to try next, what needs a human, and each typed hunch's outcome."""
+        done = [h for h in self.hyps if h.judgment]
+        ruled = [f"{h.id} on {h.branch}, {change(self.baseline(h)[0], h.params)}: {self.outcome(h)}" for h in done if h.judgment.verdict == "rejected"]
+        nxt = [f"Rerun {h.id} ({change(self.baseline(h)[0], h.params)}) with more timing rounds: {self.outcome(h)} sits inside the noise band."
+               for h in done if h.judgment.verdict == "inconclusive"][-2:]
+        nxt += list(dict.fromkeys(self.pms[h.id]["pivot"] for h in reversed(done) if h.id in self.pms))[:3 - len(nxt)]
+        human = [f"{hid} ({x['help']['target'].capitalize()} lens): {x['help']['question']}" for hid, x in self.helps.items()
+                 if not x["answered"] and not x["cancelled"]]
+        if self.hybrid and self.hybrid["state"] in ("proposed", "expired"):
+            human.append(f"Approve or drop the hybrid of {' and '.join(self.hybrid['branches'])}: {params_text(self.hybrid['params'])}.")
+        for h in done:
+            fails = errs(h)
+            if h.history[:-1] and "confirmed" in h.history[:-1] and fails and h.speedup:
+                human.append(f"{h.id} ran {h.speedup:.2f}x faster but fails {' and '.join(c.name for c in fails)} ({', '.join(c.observed for c in fails)}) under "
+                             f"the {bound_owner(h.bounds[-1])} bound. Decide whether that error is acceptable for this workload.")
+        hunches = []
+        for d in self.directives:
+            if hyp.hunch_change(d["text"]) is None:
+                continue
+            got = self.hunches.get(d["id"]) or ("not run: the session ended before it ran" if d["id"] in self.reserved else "not run")
+            x = next((h for h in self.hyps if h.id == got), None)
+            result = (f"{x.id} on {x.branch} ran {params_text(x.params)}: {self.outcome(x)}" if x and x.judgment
+                      else f"{x.id} was proposed but not measured" if x else got)
+            hunches.append({"directive": d["id"], "lens": d["lens"], "text": d["text"], "outcome": result})
+        for hid, x in self.helps.items():
+            note = (x.get("cmd") or {}).get("note")
+            if x["answered"] and x["cmd"]["option"] == "other" and note:
+                y = next((h for h in self.hyps if h.id == self.hunches.get(hid) and h.judgment), None)
+                hunches.append({"directive": hid, "lens": x["cmd"]["by"], "text": note,
+                                "outcome": f"{y.id} on {y.branch} ran {params_text(y.params)}: {self.outcome(y)}" if y else self.hunches.get(hid, "not run")})
+        best_run = best and {"run": best.run, "hypothesis": best.id, "branch": best.branch, "params": best.params.dict(),
+                             "latency_ms": best.metrics.latency_ms} | {k: out[k] for k in ("vs_naive", "vs_eager")}
+        return {"best": best_run, "ruled_out": ruled, "next": nxt, "human": human, "hunches": hunches}
 
     def proceed_default(self):
         main = self.branches["main"]

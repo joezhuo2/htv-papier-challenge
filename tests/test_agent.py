@@ -100,7 +100,7 @@ REQUIRED = {
     "verdict": {"hypothesis", "verdict", "provisional", "reason", "checks", "bound"}, "post_mortem": {"post_mortem"}, "summary": {"summary"},
     "agent_log": {"text"}, "session_finished": {"ledger", "best"}, "papiers_context": set(), "findings_exported": {"items"},
     "help_requested": {"help"}, "help_answered": {"help", "option", "by"}, "help_cancelled": {"help", "reason"}, "plan_change": {"help", "text"}, "agent_error": {"kind", "text"},
-    "hybrid_proposed": {"branches", "text"},
+    "hybrid_proposed": {"branches", "text"}, "final_report": {"report"},
 }
 HELP_KEYS = {"id", "target", "question", "evidence", "options", "default", "blocks", "deadline_s", "what_changes"}
 SUMMARY_KEYS = {"branch", "hypothesis", "tried", "moved", "verdict", "confidence", "confidence_reason", "uncertainties", "would_change_mind", "next_step"}
@@ -124,6 +124,9 @@ def assert_contract(events):
             assert set(e["help"]) == HELP_KEYS
         if e["type"] == "findings_exported":
             assert all(set(i) == {"kind", "title", "file"} and i["file"].startswith("exports/") for i in e["items"])
+        if e["type"] == "final_report":
+            assert set(e["report"]) == {"best", "ruled_out", "next", "human", "hunches"}
+            assert all(set(x) == {"directive", "lens", "text", "outcome"} for x in e["report"]["hunches"])
         if e["type"] == "post_mortem":
             assert set(e["post_mortem"]) - {"note"} == {"hypothesis", "expected", "observed", "cause", "pivot", "sweep"}
         if e["type"] == "papiers_context" and "note" in e:
@@ -194,7 +197,8 @@ def test_one_autonomous_iteration(tmp_path):
     o = make(tmp_path, Asker(h(P, 2.0, "naive", "Bigger tiles help.")), main_iters=1)
     o.run()
     assert [t for t in types(o) if t != "agent_log"] == ["session_started", "hypothesis_proposed", "run_started", "run_finished",
-                                                          "verdict", "summary", "branch_status", "findings_exported", "session_finished"]
+                                                          "verdict", "summary", "branch_status", "findings_exported", "final_report",
+                                                          "session_finished"]
     v = of(o, "verdict")[0]
     assert v["verdict"] == "confirmed" and v["checks"][0]["observed"] == "2.95x (noise +/- 0.05x)"
     assert of(o, "session_finished")[0]["best"] == {"run": "r1", "vs_naive": 2.95, "vs_eager": 1.04}
@@ -1458,3 +1462,23 @@ def test_no_help_is_requested_once_the_cap_is_reached(tmp_path):
     o = help_session(tmp_path, max_hyps=3)
     drive(o, [(judged(o, 1), SPEED)])
     assert o.hyps[-1].judgment.verdict == "inconclusive" and not of(o, "help_requested")
+
+
+def test_the_final_report_comes_before_session_finished_with_one_line_per_hunch(tmp_path):
+    from agent import orchestrator
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"gelu": "approx"}, 1.02), h(P | {"stages": 4}, 1.02), default="no json"),
+             main_iters=1, branch_iters=2, help_deadline_s=0.3)
+    orchestrator.DIRECTIVE_GAP_S, gap = 0, orchestrator.DIRECTIVE_GAP_S
+    try:
+        run_with(o, [(1, "speed", "Try the tanh approximate GELU."), (3, "precision", "Max error under 1e-3 on both batches.")])
+    finally:
+        orchestrator.DIRECTIVE_GAP_S = gap
+    assert types(o)[-2:] == ["final_report", "session_finished"]
+    r = of(o, "final_report")[0]["report"]
+    assert r["best"]["run"] == of(o, "session_finished")[0]["best"]["run"] and r["best"]["hypothesis"] == "H0"
+    assert any(x.startswith("H1 on speed, acc fp32 to fp16: rejected") for x in r["ruled_out"])
+    assert any("Decide whether that error is acceptable" in x and x.startswith("H1 ran 1.43x faster") for x in r["human"])
+    assert r["hunches"] == [{"directive": "d1", "lens": "speed", "text": "Try the tanh approximate GELU.",
+                             "outcome": "H2 on speed ran 128x128x32 tiles, 4 warps, 3 stages, FP32 accumulation, approx GELU: " + o.outcome(o.hyps[2])}]
+    assert r["next"]
+    assert_contract(o.log.events)

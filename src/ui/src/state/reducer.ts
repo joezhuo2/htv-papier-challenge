@@ -1,5 +1,5 @@
 import type {
-  Bound, Branch, Check, DemoEvent, Directive, HelpRequest, Hypothesis, LedgerEntry, Lens, Metrics, PapiersNote, Params, PostMortem, Report, Summary, Verdict,
+  Bound, Branch, Check, DemoEvent, Directive, FinalReport, HelpRequest, Hypothesis, LedgerEntry, Lens, Metrics, PapiersNote, Params, PostMortem, Report, Summary, Verdict,
 } from '@contract/types'
 
 export interface VerdictView { verdict: Verdict; provisional: boolean; reason: string; checks: Check[]; t: number; bound: Bound }
@@ -81,6 +81,7 @@ export interface View {
   hybrid?: { branches: string[]; text: string; t: number; approved?: boolean; dismissed?: boolean }
   ledger?: LedgerEntry[]
   best?: Report['best']
+  final?: FinalReport
   lens: Lens
   selected: Selection
 }
@@ -228,6 +229,8 @@ export function reduce(prev: View, a: Action): View {
       const err = { t: e.t, kind: e.kind, text: e.text, branch: e.branch, retry_in_s: e.retry_in_s }
       return { ...v, errors: [...v.errors, err], stalled: e.kind === 'harness_timeout' ? v.stalled : err }
     }
+    case 'final_report':
+      return { ...v, final: e.report }
     case 'session_finished':
       return { ...v, finished: true, ledger: e.ledger, best: e.best, helps: v.helps.map(h => (h.answer ? h : { ...h, expired: true })) }
   }

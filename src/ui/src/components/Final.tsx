@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { Command } from '@contract/types'
+import type { Command, FinalReport } from '@contract/types'
 import type { View } from '../state/reducer'
 import { boundText, clock, lensName, ms, paramText, runOf, windowText } from '../state/derive'
 import { MockTag, VerdictChip } from './Glyph'
@@ -19,7 +19,8 @@ export function ResultCard({ view }: { view: View }) {
           <>
             <p className="strong" style={{ fontSize: 20 }}>{best.vs_naive.toFixed(2)}x faster than naive, {best.vs_eager.toFixed(2)}x vs PyTorch eager</p>
             <p className="small">
-              <span className="mono">{run.id}</span> on <span className="mono">{run.branch}</span>, {ms(run.metrics.latency_ms)}, {run.metrics.tflops.toFixed(1)} TFLOPS,
+              <span className="tag" data-testid="best-label">best confirmed</span> <span className="mono">{run.id}</span>
+              {view.final?.best ? <> (<span className="mono">{view.final.best.hypothesis}</span>)</> : null} on <span className="mono">{run.branch}</span>, {ms(run.metrics.latency_ms)}, {run.metrics.tflops.toFixed(1)} TFLOPS,
               {' '}max error {run.metrics.max_error.toExponential(1)}, adversarial {run.metrics.adv_error.toExponential(1)}
             </p>
             {run.params ? <p className="mono small">{paramText(run.params)}</p> : null}
@@ -28,6 +29,7 @@ export function ResultCard({ view }: { view: View }) {
           </>
         ) : <p className="empty">No confirmed result in this session.</p>}
       </article>
+      {view.final ? <FinalSections report={view.final} /> : null}
       <article className="card">
         <h3>What the agent rejected, and why</h3>
         {rejected.length === 0 ? <p className="empty">Nothing was rejected.</p> : rejected.map(h => (
@@ -47,6 +49,32 @@ export function ResultCard({ view }: { view: View }) {
         {exported.length ? <p className="small muted">Exported for Papiers import: {exported.map(x => x.file).join(', ')}</p> : null}
       </article>
     </div>
+  )
+}
+
+function FinalSections({ report }: { report: FinalReport }) {
+  const sections: [string, string, string[]][] = [
+    ['Ruled out', 'Nothing was ruled out.', report.ruled_out],
+    ['What to try next', 'No follow-up suggested.', report.next],
+    ['Needs a human decision', 'Nothing is waiting on a lens owner.', report.human],
+  ]
+  return (
+    <>
+      {sections.map(([title, empty, items]) => (
+        <article key={title} className="card" data-testid={`final-${title.split(' ')[0].toLowerCase()}`}>
+          <h3>{title}</h3>
+          {items.length ? <ul className="plain small">{items.map((x, i) => <li key={i}>{x}</li>)}</ul> : <p className="empty">{empty}</p>}
+        </article>
+      ))}
+      <article className="card" data-testid="final-hunches">
+        <h3>Your hunches</h3>
+        {report.hunches.length ? (
+          <ul className="plain small">
+            {report.hunches.map(x => <li key={x.directive}><span className="mono">{x.directive}</span> {lensName(x.lens)}: "{x.text}": {x.outcome}</li>)}
+          </ul>
+        ) : <p className="empty">No hunch was typed in this session.</p>}
+      </article>
+    </>
   )
 }
 
