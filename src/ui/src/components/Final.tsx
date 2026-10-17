@@ -14,7 +14,7 @@ export function ResultCard({ view }: { view: View }) {
   return (
     <div className="stack result" data-testid="result-card" style={{ overflow: 'auto', minHeight: 0 }}>
       <article className="card focus">
-        <div className="row"><h2>Final result</h2><MockTag on={view.mock} /></div>
+        <div className="row"><h2>Best confirmed result</h2><MockTag on={view.mock} /></div>
         {best && run?.metrics ? (
           <>
             <p className="strong" style={{ fontSize: 20 }}>{best.vs_naive.toFixed(2)}x faster than naive, {best.vs_eager.toFixed(2)}x vs PyTorch eager</p>

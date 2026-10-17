@@ -1026,3 +1026,14 @@ def test_a_flip_withdraws_a_help_request_when_nothing_continues_the_branch(tmp_p
     assert not of(o, "help_answered") and any("withdrawn" in e["text"] for e in of(o, "agent_log"))
     assert orchestrator.open_help(o.helps["hq1"]) is False
     assert_contract(o.log.events)
+
+
+def test_the_waiting_line_is_logged_once_and_explanation_fallbacks_stay_out_of_the_replay(tmp_path):
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"warps": 8}, 1.02), default="no json"), main_iters=1, branch_iters=2,
+             help_deadline_s=0.3, directive_wait_s=30)
+    o.set_record(4)
+    o.main_iters = 1
+    drive(o, [(judged(o, 1), SPEED), (judged(o, 3), {"type": "stop"})])
+    logs = [e["text"] for e in of(o, "agent_log")]
+    assert sum(t.startswith("Waiting for a lens directive") for t in logs) == 1
+    assert not any(t.startswith("Explanation model unavailable") for t in logs)

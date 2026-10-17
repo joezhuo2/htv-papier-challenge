@@ -19,7 +19,7 @@ describe('chapters', () => {
       ['post_mortem', 'Post-mortem H1', 74000],
       ['help', 'Help request', 97000],
       ['hybrid', 'Hybrid', 152000],
-      ['end', 'Final result', 176000],
+      ['end', 'Best confirmed result', 176000],
     ])
   })
 

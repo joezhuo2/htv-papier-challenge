@@ -208,7 +208,8 @@ export function reduce(prev: View, a: Action): View {
     case 'plan_change':
       return { ...v, feed: [...v.feed, { kind: 'plan_change', help: e.help, text: e.text, t: e.t, mock }] }
     case 'agent_log':
-      return { ...v, log: [...v.log, { t: e.t, text: e.text }] }
+      // provider failover and explanation fallbacks are diagnostics, older logs still carry them
+      return DIAGNOSTIC.test(e.text) ? v : { ...v, log: [...v.log, { t: e.t, text: e.text }] }
     case 'findings_exported':
       return { ...v, feed: [...v.feed, { kind: 'export', items: e.items, t: e.t, mock }] }
     case 'report_ready':
@@ -236,5 +237,7 @@ function reduceUi(v: View, a: UiAction): View {
     case 'ui/hybrid': return v.hybrid ? { ...v, hybrid: { ...v.hybrid, approved: a.approved || undefined, dismissed: !a.approved || undefined } } : v
   }
 }
+
+const DIAGNOSTIC = /^Explanation model unavailable|failed \(\w+\), answered by /
 
 export const fold = (events: DemoEvent[], v = initialView()) => events.reduce(reduce, v)

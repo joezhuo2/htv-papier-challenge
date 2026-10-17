@@ -214,6 +214,7 @@ class Orchestrator:
         self.directive_wait_s = directive_wait_s
         self.defaulted: set[str] = set()  # branches reopened by the no-directive default, flagged on their hypotheses
         self.waiting = False
+        self.announced = False  # the waiting line is logged once per session
         self.retry = threading.Event()
         self.applied = threading.Event()  # set by the listener when a command arrived, so an idle session stays open
         self.helps: dict[str, dict] = {}  # id -> {help, branch, t, answered, expired}
@@ -320,7 +321,9 @@ class Orchestrator:
                         idle = time.monotonic()
                     elif not self.waiting:
                         self.waiting = True
-                        self.log.emit("agent_log", text=f"Waiting for a lens directive. With none in {self.directive_wait_s:.0f} s I continue on main with the default.")
+                        if not self.announced:
+                            self.announced = True
+                            self.log.emit("agent_log", text=f"Waiting for a lens directive. With none in {self.directive_wait_s:.0f} s I continue on main with the default.")
                     elif time.monotonic() - idle > self.directive_wait_s:
                         self.proceed_default()
                         idle = time.monotonic()
@@ -1088,7 +1091,7 @@ class Orchestrator:
         except Stopped:
             return None
         except Exception as e:  # noqa: BLE001, a slow or failing model must not stop the research loop
-            self.log.emit("agent_log", text=f"Explanation model unavailable ({type(e).__name__}), using the factual summary.")
+            self.note(f"explanation model unavailable for {tag} ({type(e).__name__}), using the factual template")
             return None
         return d if all(isinstance(d.get(k), (str, list)) for k in keys) else None
 

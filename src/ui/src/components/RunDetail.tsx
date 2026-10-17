@@ -1,6 +1,6 @@
 import type { View } from '../state/reducer'
 import { boundText, clock, hypothesisOf, lensName, ms, paramText, predictionText, runOf, sci, windowText } from '../state/derive'
-import { InformedBy } from './PapiersPanel'
+import { InformedBy, NoteText } from './PapiersPanel'
 import { Glyph, VerdictChip } from './Glyph'
 
 export function RunDetail({ view, onClose }: { view: View; onClose: () => void }) {
@@ -25,6 +25,7 @@ export function RunDetail({ view, onClose }: { view: View; onClose: () => void }
         <>
           <p><span className="mono">{h.id}</span> {h.claim}</p>
           <InformedBy view={view} h={h} />
+          {h.note && !/^Context from Papiers note \S+$/.test(h.note) ? <p className="small muted" data-testid="hypothesis-note"><NoteText view={view} text={h.note} /></p> : null}
           <dl>
             <dt>Predicted</dt><dd>{predictionText(view, h)}</dd>
             {run?.params ? <><dt>Params</dt><dd className="mono">{paramText(run.params)}</dd></> : null}

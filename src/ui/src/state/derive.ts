@@ -58,7 +58,7 @@ export const predictionText = (v: View, h: HypothesisView) => {
   return `at least ${times(h.prediction.min_speedup)} vs ${vs}${at}, error ${boundText(h.prediction.bound)}`
 }
 
-export const papiersNote = (h?: Hypothesis) => h?.note?.match(/papiers note (\S+)/i)?.[1]
+export const papiersNote = (h?: Hypothesis) => h?.note?.match(/papiers note ((?:cnv|hl|nte|psg)_[0-9a-zA-Z]+)/i)?.[1]
 
 export const hypothesisOf = (v: View, id?: string) => v.hypotheses.find(h => h.id === id)
 export const runOf = (v: View, id?: string) => v.runs.find(r => r.id === id)

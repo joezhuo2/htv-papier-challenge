@@ -17,6 +17,18 @@ const press = (fn: () => void) => ({
   },
 })
 
+const median = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b)
+  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2
+}
+
+// latency limit for the chart: 2x the median of the runs that are not outliers (over 3x the median of all runs)
+export const latencyCap = (lat: number[]) => {
+  if (lat.length < 3) return Infinity
+  const all = median(lat)
+  return 2 * median(lat.filter(l => l <= 3 * all))
+}
+
 const niceStep = (max: number) => [0.5, 1, 2, 5, 10, 20].find(s => max / s <= 6) ?? 50
 
 export function MetricChart({ view, onSelectRun }: Props) {
@@ -35,7 +47,9 @@ export function MetricChart({ view, onSelectRun }: Props) {
   })
   const pending = ghosts.filter(g => !g.run).length
   const slots = Math.max(view.runs.length + pending, 6)
-  const measured = view.runs.filter(r => r.metrics).map(r => runSp(r))
+  const cap = latencyCap(view.runs.filter(r => r.metrics).map(r => r.metrics!.latency_ms))
+  const off = (r: (typeof view.runs)[number]) => r.metrics!.latency_ms > cap
+  const measured = view.runs.filter(r => r.metrics && !off(r)).map(r => runSp(r))
   const maxY = Math.max(eager ? sp(eager) : 1, ...measured, ...ghosts.map(g => g.value), 2) * 1.12
   const step = niceStep(maxY)
 
@@ -78,7 +92,7 @@ export function MetricChart({ view, onSelectRun }: Props) {
             </g>
           ))}
           {branches.map(b => {
-            const pts = view.runs.filter(r => r.branch === b && r.metrics)
+            const pts = view.runs.filter(r => r.branch === b && r.metrics && !off(r))
             if (pts.length < 2) return null
             return (
               <polyline
@@ -93,7 +107,7 @@ export function MetricChart({ view, onSelectRun }: Props) {
             const gy = y(g.value)
             return (
               <g key={g.h} data-testid={`ghost-${g.h}`} data-resolved={g.run?.finished !== undefined ? 'true' : 'false'}>
-                {done ? <line x1={x(i)} x2={x(i)} y1={gy} y2={y(runSp(g.run!))} stroke="var(--muted)" strokeWidth="1" /> : null}
+                {done && !off(g.run!) ? <line x1={x(i)} x2={x(i)} y1={gy} y2={y(runSp(g.run!))} stroke="var(--muted)" strokeWidth="1" /> : null}
                 <circle cx={x(i)} cy={gy} r="6" fill="var(--surface)" stroke="var(--muted)" strokeWidth="1.5" opacity={done ? 0.8 : 1} />
                 {!done && !crowded && !g.run?.failed ? (
                   <text x={x(i) + 10} y={gy + 4} fontSize="11">{g.h} predicted at least {times(g.value)}</text>
@@ -101,7 +115,18 @@ export function MetricChart({ view, onSelectRun }: Props) {
               </g>
             )
           })}
-          {view.runs.filter(r => r.metrics).map(r => {
+          {view.runs.filter(r => r.metrics && off(r)).map(r => {
+            const cx = x(r.index), cy = m.t + ih - 6
+            const text = `${r.id} off scale: ${r.metrics!.latency_ms.toFixed(3)} ms, ${times(runSp(r))} vs naive`
+            return (
+              <g key={r.id} {...press(() => onSelectRun(r.id))} data-testid={`offscale-${r.id}`} aria-label={text}>
+                <title>{text}</title>
+                <path className="hit" d={`M${cx - 5} ${cy - 4} L${cx + 5} ${cy - 4} L${cx} ${cy + 4} Z`} fill="var(--surface)" stroke="var(--rejected)" strokeWidth="1.4" />
+                <text x={cx + 9} y={cy} fontSize="11" fill="var(--rejected)">off scale</text>
+              </g>
+            )
+          })}
+          {view.runs.filter(r => r.metrics && !off(r)).map(r => {
             const v = runSp(r)
             const spread = (r.metrics!.spreads?.naive ?? 0) * v
             const vd = view.verdicts[r.hypothesis]
