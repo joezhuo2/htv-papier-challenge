@@ -1,0 +1,8 @@
+{
+  "valid_hypothesis": "{\"claim\": \"Bigger tiles with 4 warps and 2 pipeline stages will recover most of the throughput the naive configuration leaves unused.\", \"prediction\": {\"min_speedup\": 2.0, \"vs\": \"naive\", \"max_error\": 0.001}, \"params\": {\"block_m\": 128, \"block_n\": 128, \"block_k\": 32, \"warps\": 4, \"stages\": 2, \"acc\": \"fp32\", \"gelu\": \"exact\"}}",
+  "fp16_hypothesis": "{\"claim\": \"Accumulating in FP16 with 128x128 tiles will cut latency further while staying under the error bound.\", \"prediction\": {\"min_speedup\": 1.3, \"vs\": \"parent_best\", \"max_error\": 0.001}, \"params\": {\"block_m\": 128, \"block_n\": 128, \"block_k\": 32, \"warps\": 4, \"stages\": 2, \"acc\": \"fp16\", \"gelu\": \"exact\"}}",
+  "fenced_hypothesis": "Here is my hypothesis:\n```json\n{\"claim\": \"Approximate GELU removes epilogue cost.\", \"prediction\": {\"min_speedup\": 1.05, \"vs\": \"parent_best\", \"max_error\": 0.001}, \"params\": {\"block_m\": 128, \"block_n\": 128, \"block_k\": 32, \"warps\": 4, \"stages\": 2, \"acc\": \"fp32\", \"gelu\": \"approx\"}}\n```",
+  "malformed_json": "{\"claim\": \"Bigger tiles help\", \"prediction\": {\"min_speedup\": 2.0, \"vs\": \"naive\"",
+  "free_form_code": "{\"claim\": \"Rewrite the kernel loop.\", \"prediction\": {\"min_speedup\": 1.5, \"vs\": \"naive\", \"max_error\": 0.001}, \"params\": {\"block_m\": 128, \"code\": \"@triton.jit\\ndef k(): pass\"}}",
+  "glowing_claim": "This run was a resounding success. The FP16 accumulation hypothesis is clearly confirmed: latency dropped dramatically and the error is well within tolerance. Verdict: confirmed."
+}

@@ -1,0 +1,27 @@
+[
+  {
+    "name": "naive",
+    "params": {"block_m": 16, "block_n": 16, "block_k": 16, "warps": 1, "stages": 1, "acc": "fp32", "gelu": "exact"},
+    "metrics": {"latency_ms": 1.891, "tflops": 9.08, "max_error": 4.93e-4, "adv_error": 5.23e-4, "vram_mb": 96.0, "compiled_ok": true, "correct_ok": true}
+  },
+  {
+    "name": "best",
+    "params": {"block_m": 128, "block_n": 128, "block_k": 32, "warps": 4, "stages": 2, "acc": "fp32", "gelu": "exact"},
+    "metrics": {"latency_ms": 0.645, "tflops": 26.63, "max_error": 4.93e-4, "adv_error": 5.23e-4, "vram_mb": 96.0, "compiled_ok": true, "correct_ok": true}
+  },
+  {
+    "name": "fp16_acc",
+    "params": {"block_m": 128, "block_n": 128, "block_k": 32, "warps": 4, "stages": 2, "acc": "fp16", "gelu": "exact"},
+    "metrics": {"latency_ms": 0.486, "tflops": 35.36, "max_error": 1.32e-2, "adv_error": 7.08e-2, "vram_mb": 96.0, "compiled_ok": true, "correct_ok": false}
+  },
+  {
+    "name": "approx_gelu",
+    "params": {"block_m": 128, "block_n": 128, "block_k": 32, "warps": 4, "stages": 2, "acc": "fp32", "gelu": "approx"},
+    "metrics": {"latency_ms": 0.645, "tflops": 26.63, "max_error": 6.92e-4, "adv_error": 7.20e-4, "vram_mb": 96.0, "compiled_ok": true, "correct_ok": true}
+  },
+  {
+    "name": "smem_overflow",
+    "params": {"block_m": 128, "block_n": 256, "block_k": 64, "warps": 8, "stages": 4, "acc": "fp32", "gelu": "exact"},
+    "metrics": {"compiled_ok": false, "correct_ok": false, "error": "OutOfResources: out of resource: shared memory, Required: 147456"}
+  }
+]

@@ -1,0 +1,41 @@
+[project]
+name = "warroom"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.4",
+    "openai>=2.54.0",
+    "python-dotenv>=1.2.4",
+    "torch>=2.11.0",
+    "triton>=3.6.0",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+triton = { index = "pytorch" }
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/harness", "src/agent", "src/server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-m", "not gpu and not papiers"]
+markers = [
+    "gpu: needs the GPU (uv run pytest -m gpu)",
+    "papiers: needs the real Papiers CLI and PAPIERS_TOKEN (uv run pytest -m papiers)",
+    "slow: long running, only collected when the -m expression names slow (uv run pytest -m slow)",
+]
