@@ -18,7 +18,7 @@ from agent import hypothesis as hyp
 from agent.events import Log
 from agent.verdict import Judgment, judge, sci
 from harness.data import BOUND
-from harness.kernel import NAIVE, SMEM_LIMIT, Params, smem_bytes
+from harness.kernel import NAIVE, SMEM_LIMIT, Params, acc_per_thread, fit_stages, smem_bytes
 from harness.metrics import Metrics
 from harness.runner import TIMEOUT_S
 
@@ -29,6 +29,10 @@ QUERIES = {"both": "Triton matrix multiplication tiling warps pipeline stages", 
 MAX_PER_LENS = 3
 DIRECTIVE_GAP_S = 10.0
 MAX_DIRECTIVES = 6
+TILE = ("block_m", "block_n", "block_k", "warps", "stages")
+# FP32 accumulator elements per thread that still leave registers for the operands (255 per thread). FP16 packs two per register.
+ACC_LIMIT = {"fp32": 128, "fp16": 256}
+SLOW = 0.5  # a run below this speedup vs its parent gets a register post-mortem
 
 
 @dataclass
@@ -88,6 +92,16 @@ def ruled_out(p: Params, base: Params):
     return ", ".join(f"{k}={getattr(p, k)}" for k in keys) or f"the configuration {p.dict()}"
 
 
+def hybrid_guard(p: Params, area):
+    """Why a hybrid candidate would overflow the registers or shared memory, or None when it is within bounds."""
+    per, limit = acc_per_thread(p), ACC_LIMIT[p.acc]
+    if p.block_m * p.block_n > area:
+        return f"has a {p.block_m}x{p.block_n} tile ({p.block_m * p.block_n} elements) over the larger parent's {area}"
+    if per > limit:
+        return f"puts {per} {p.acc.upper()} accumulator elements on each of {p.warps * 32} threads, over {limit}"
+    return None
+
+
 def failure_cause(p: Params, m: Metrics):
     """Templated post-mortem for a run that did not compile or run, with the shared memory arithmetic when Triton ran out of it."""
     err = m.error or ""
@@ -104,6 +118,19 @@ def failure_cause(p: Params, m: Metrics):
                 "pivot": "Go back to the best configuration on this branch and change one parameter at a time."}
     return {"cause": f"The run failed before measuring: {err.strip().splitlines()[-1][:200] if err.strip() else 'no error text'}.",
             "pivot": "Go back to the best configuration on this branch and change one parameter at a time."}
+
+
+def register_cause(p: Params, m: Metrics, speedup, parent: Metrics | None):
+    """Templated post-mortem for a run far slower than its parent, from the compiled kernel's register and spill counts."""
+    per = acc_per_thread(p)
+    regs = (f"The compiled kernel uses {m.n_regs} registers per thread and spills {m.n_spills} 32-bit words ({m.n_spills * 4} bytes) per thread to local memory"
+            if m.n_regs is not None else "The run did not record its register count")
+    vs = f", against {parent.n_regs} registers and {parent.n_spills} spilled words for the parent" if parent and parent.n_regs is not None else ""
+    tile = f"Its {p.block_m}x{p.block_n} {p.acc.upper()} accumulator over {p.warps} warps ({p.warps * 32} threads) is {per} elements per thread"
+    why = (f"{tile}, against at most {ACC_LIMIT[p.acc]} that fit beside the operands, so the inner loop reads and writes local memory"
+           if per > ACC_LIMIT[p.acc] else f"{tile}, within the {ACC_LIMIT[p.acc]} limit, so the accumulator alone does not explain the slowdown")
+    cause = f"{regs}{vs}. {why}. It runs at {speedup:.2f}x of the parent."
+    return {"cause": cause, "pivot": f"Keep the accumulator at or under {ACC_LIMIT[p.acc]} elements per thread: a smaller output tile or more warps."}
 
 
 def assess(h):
@@ -530,7 +557,8 @@ class Orchestrator:
             self.export_failure(h, b)
             self.pivot(h)
             return
-        if unsafe:
+        slow = h.ref == "parent" and h.speedup is not None and h.speedup < SLOW
+        if unsafe or slow:
             self.post_mortem(h)
 
         b.misses = 0 if v == "confirmed" else b.misses + 1
@@ -554,7 +582,7 @@ class Orchestrator:
         if b.id == "merge":
             nxt = "Keep the hybrid, the lenses' changes add up." if v == "confirmed" else "Keep the faster parent, the hybrid did not beat it."
         self.summarize(h, b, nxt)
-        if unsafe:
+        if unsafe or slow:
             self.export_failure(h, b)
         if b.id == "merge" and v == "confirmed":
             for pid in b.parents:
@@ -776,7 +804,10 @@ class Orchestrator:
 
     def maybe_hybrid(self):
         """After a lens conflict, proposes merging the fastest correct run of each lens: the parameters each lens changed from the
-        common start, with the Precision lens winning where both changed the same one. Approval is the presenter's."""
+        common start, with the Precision lens winning where both changed the same one. The union of two tile changes can overflow
+        the registers, so a candidate must keep the tile area within the larger parent's and the accumulator per thread within
+        ACC_LIMIT. When the full union does not, the hybrid keeps one parent's tile shape and takes the merged dtype and GELU.
+        Approval is the presenter's."""
         if self.hybrid or not self.conflicts or not any(d["lens"] == "precision" for d in self.directives):
             return
         lens_best = {}
@@ -787,13 +818,24 @@ class Orchestrator:
             lens_best[lens] = runs[0]
         pb, sb = lens_best["precision"], lens_best["speed"]
         base = self.start_point("main")[0]
-        merged = {k: getattr(pb.params, k) if getattr(pb.params, k) != getattr(base, k) else getattr(sb.params, k) for k in base.dict()}
-        p = Params(**merged)
+        union = Params(**{k: getattr(pb.params, k) if getattr(pb.params, k) != getattr(base, k) else getattr(sb.params, k) for k in base.dict()})
+        faster, slower = sorted((pb, sb), key=lambda h: h.metrics.latency_ms)
+        area = max(x.params.block_m * x.params.block_n for x in (pb, sb))
         tried = {json.dumps(h.params.dict(), sort_keys=True) for h in self.hyps}
-        if p in (pb.params, sb.params) or json.dumps(p.dict(), sort_keys=True) in tried or smem_bytes(p) > SMEM_LIMIT:
+        rejects = []
+        for src in (None, faster, slower):
+            p = fit_stages(union if src is None else replace(union, **{k: getattr(src.params, k) for k in TILE}))
+            why = hybrid_guard(p, area)
+            if why and src is None:
+                rejects.append(f"The full union, {params_text(p)}, {why}")
+            if not why and p not in (pb.params, sb.params) and json.dumps(p.dict(), sort_keys=True) not in tried:
+                break
+        else:
             return
-        faster = min((pb, sb), key=lambda h: h.metrics.latency_ms)
+        keep = f" Keeping the tile shape of {src.branch} ({src.id}) instead." if src else ""
         text = (f"Combine {change(base, sb.params)} from {sb.branch} ({sb.id}) with {change(base, pb.params)} from {pb.branch} ({pb.id}). "
+                + (f"{rejects[0]}.{keep} " if rejects else "")
+                + f"Candidate: {params_text(p)}, {acc_per_thread(p)} accumulator elements per thread. "
                 "The expected gain is small, so the result shows whether the two lenses' changes add up.")
         self.hybrid = {"branches": [pb.branch, sb.branch], "params": p, "base": faster.params, "faster": faster, "text": text,
                        "t": self.log.clock(), "state": "proposed"}
@@ -933,6 +975,12 @@ class Orchestrator:
         if m.latency_ms is None:
             pm = {"hypothesis": h.id, "expected": expected, "observed": f"The run failed: {(m.error or 'no measurement').strip().splitlines()[-1][:200]}",
                   "sweep": []} | failure_cause(h.params, m)
+        elif h.ref == "parent" and h.speedup < SLOW and m.max_error < h.prediction["max_error"]:
+            pp = h.base or self.best_run(h.branch).params
+            parent = next((x.metrics for x in self.hyps if x.params == pp and x.metrics and x.metrics.latency_ms), None)
+            pm = {"hypothesis": h.id, "expected": expected, "sweep": [],
+                  "observed": f"{m.latency_ms:.3f} ms against {m.ref_ms['parent']:.3f} ms for the parent in the same window, {h.speedup:.2f}x (+/- {h.speedup * h.noise:.2f}x)."} \
+                | register_cause(h.params, m, h.speedup, parent)
         else:
             observed = f"Speedup of {h.speedup:.2f}x (+/- {h.speedup * h.noise:.2f}x), standard error {sci(m.max_error)}, adversarial error {sci(m.adv_error)}."
             s = Metrics() if self.stopped else self.gpu_run({"target": "sweep", "params": h.params.dict(), "ks": SWEEP_KS}, f"{self.session}/{h.id}-sweep")

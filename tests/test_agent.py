@@ -116,7 +116,7 @@ def assert_contract(events):
         if e["type"] == "summary":
             assert set(e["summary"]) == SUMMARY_KEYS
         if e["type"] == "run_finished":
-            assert set(e["run"]["metrics"]) - {"speedups", "spreads"} == {"latency_ms", "tflops", "max_error", "adv_error", "vram_mb", "compiled_ok", "correct_ok"}
+            assert set(e["run"]["metrics"]) - {"speedups", "spreads", "n_regs", "n_spills"} == {"latency_ms", "tflops", "max_error", "adv_error", "vram_mb", "compiled_ok", "correct_ok"}
         if e["type"] in ("verdict", "hypothesis_proposed"):
             b = e["bound"] if e["type"] == "verdict" else e["hypothesis"]["prediction"]["bound"]
             assert set(b) == {"standard", "adversarial", "set_by"} and b["set_by"] in ("speed", "precision", "default")
@@ -882,3 +882,63 @@ def test_a_duplicate_answer_is_ignored_silently_and_the_cap_reports_cut_promises
     last_status = {e["branch"]: e["status"] for e in ev if e["type"] == "branch_status"}
     assert all(s not in ("running", "waiting_on_human") for s in last_status.values()) and set(last_status) == set(o.branches)
     assert types(o)[-1] == "session_finished"
+
+
+# ---- hybrid guard and register post-mortem ----
+
+def lens_state(tmp_path):
+    """The 11:00 recording: H0 on main, H4 on prec (256x128) and H5 on speed2 (128x256, approx GELU), after a conflict."""
+    from agent.orchestrator import Branch, Hyp
+    from agent.verdict import Judgment
+    from harness.kernel import Params
+    o = make(tmp_path, Asker())
+    o.naive = met(2.0)
+    for b in (Branch("main", [], "Baseline", "both"), Branch("prec", ["main"], "Precision lens", "precision"),
+              Branch("speed2", ["main"], "Speed lens", "speed")):
+        o.branches[b.id] = b
+    base = Params(128, 128, 64, 4, 4)
+    for i, (bid, p, lat) in enumerate([("main", base, 0.78), ("prec", Params(256, 128, 64, 8, 3), 0.70),
+                                        ("speed2", Params(128, 256, 64, 8, 3, gelu="approx"), 0.697)]):
+        x = Hyp(f"H{i}", bid, "c", {"min_speedup": 1.02, "vs": "parent_best", "max_error": 1e-3}, p, metrics=met(lat))
+        x.judgment = Judgment("confirmed", False, "Prediction holds.")
+        o.hyps.append(x)
+    o.directives = [{"id": "d1", "lens": "precision", "threshold": 1e-3}]
+    o.conflicts = 1
+    return o
+
+
+def test_hybrid_never_takes_a_tile_union_that_overflows_the_registers(tmp_path):
+    from harness.kernel import acc_per_thread
+    o = lens_state(tmp_path)
+    o.maybe_hybrid()
+    p = o.hybrid["params"]
+    assert (p.block_m, p.block_n) != (256, 256) and p.block_m * p.block_n <= 256 * 128 and acc_per_thread(p) <= 128
+    assert p.gelu == "approx" and (p.block_m, p.block_n, p.warps) == (256, 128, 8)
+    text = of(o, "hybrid_proposed")[0]["text"]
+    assert "256x256" in text and "65536 elements" in text and "Keeping the tile shape of prec (H1)" in text
+
+
+def test_a_run_far_slower_than_its_parent_gets_a_register_post_mortem(tmp_path):
+    merged = P | {"stages": 4, "gelu": "approx"}
+    slow = Metrics.from_dict(met(6.4, err=6.9e-4, adv=7.2e-4).dict() | {"n_regs": 40, "n_spills": 1492})
+    faster = json.dumps(P | {"stages": 4}, sort_keys=True)
+    table = TABLE | {json.dumps(merged, sort_keys=True): slow, faster: Metrics.from_dict(TABLE[faster].dict() | {"n_regs": 255, "n_spills": 24})}
+
+    class Window(Engine):
+        def __call__(self, spec, run_id):
+            m = super().__call__(spec, run_id)
+            if spec.get("refs") and m.latency_ms:
+                m.ref_ms = {k: self.one(r).latency_ms for k, r in spec["refs"].items()}
+            return m
+
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"gelu": "approx"}, 1.02), h(P | {"stages": 4}, 1.02), default="no json"),
+             engine=Window(table), main_iters=1, branch_iters=1, help_deadline_s=5)
+    proposed = lambda: bool(of(o, "hybrid_proposed"))
+    drive(o, [(judged(o, 1), SPEED), (judged(o, 2), {"type": "add_directive", "lens": "precision", "text": "Max error under 1e-3 on both batches."}),
+              (proposed, {"type": "approve_hybrid", "branches": ["prec", "speed2"]})])
+    run = next(e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["branch"] == "merge")
+    pm = next(e["post_mortem"] for e in of(o, "post_mortem") if e["post_mortem"]["hypothesis"] == run["id"])
+    assert "40 registers per thread" in pm["cause"] and "1492 32-bit words" in pm["cause"] and "255 registers and 24 spilled words for the parent" in pm["cause"]
+    assert "128 elements per thread, within the 128 limit" in pm["cause"] and "6.400 ms" in pm["observed"] and pm["sweep"] == []
+    assert any(i["kind"] == "negative_result" and i["file"] == f"exports/{run['id']}-negative-result.md" for e in of(o, "findings_exported") for i in e["items"])
+    assert_contract(o.log.events)

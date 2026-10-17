@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 import torch
 import triton
@@ -14,6 +14,16 @@ def smem_bytes(p):
     """Shared memory the pipelined FP16 tiles need, (stages - 1) buffers of an x tile and a w tile. Matches Triton's
     OutOfResources figure for every logged failure, for example 147456 for 128x256x64 with 4 stages."""
     return (p.stages - 1) * (p.block_m * p.block_k + p.block_k * p.block_n) * 2
+
+
+def fit_stages(p):
+    """p with the largest stage count at or under p.stages whose shared memory fits. One stage needs no pipeline buffers and always fits."""
+    return next(replace(p, stages=s) for s in range(p.stages, 0, -1) if smem_bytes(replace(p, stages=s)) <= SMEM_LIMIT)
+
+
+def acc_per_thread(p):
+    """Accumulator elements each thread holds: the BM x BN output tile spread over warps x 32 threads."""
+    return p.block_m * p.block_n // (p.warps * 32)
 
 
 @dataclass(frozen=True)
@@ -93,16 +103,22 @@ def fused_kernel(
     tl.store(y_ptr + rm[:, None] * sym + rn[None, :] * syn, z.to(tl.float16), mask=mask)
 
 
-def run(p: Params, x, w, b):
+def launch(p: Params, x, w, b):
+    """Returns the output and the compiled kernel, whose n_regs (registers per thread) and n_spills (32-bit words of local memory
+    per thread) are logged as evidence."""
     M, K = x.shape
     N = w.shape[1]
     y = torch.empty((M, N), device=x.device, dtype=torch.float16)
     grid = (triton.cdiv(M, p.block_m) * triton.cdiv(N, p.block_n),)
-    fused_kernel[grid](
+    ck = fused_kernel[grid](
         x, w, b, y, M, N, K,
         x.stride(0), x.stride(1), w.stride(0), w.stride(1), y.stride(0), y.stride(1),
         BM=p.block_m, BN=p.block_n, BK=p.block_k, GM=GROUP_M,
         ACC16=p.acc == "fp16", APPROX=p.gelu == "approx",
         num_warps=p.warps, num_stages=p.stages,
     )
-    return y
+    return y, ck
+
+
+def run(p: Params, x, w, b):
+    return launch(p, x, w, b)[0]

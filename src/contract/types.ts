@@ -23,6 +23,9 @@ export interface Metrics {
   // speedups against references timed in the same window as this run, and the relative half-range of the per-round ratios
   speedups?: Partial<Record<'naive' | 'eager' | 'parent', number>>
   spreads?: Partial<Record<'naive' | 'eager' | 'parent', number>>
+  // from the compiled Triton kernel: registers per thread and 32-bit words spilled to local memory per thread
+  n_regs?: number
+  n_spills?: number
 }
 
 export interface Branch {

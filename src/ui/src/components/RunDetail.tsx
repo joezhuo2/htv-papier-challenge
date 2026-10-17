@@ -34,6 +34,7 @@ export function RunDetail({ view, onClose }: { view: View; onClose: () => void }
                 {m.speedups ? <><dt>Speedup</dt><dd>{windowText(m)}, same timing window</dd></> : null}
                 <dt>Error</dt><dd>max {sci(m.max_error)}, adversarial {sci(m.adv_error)}</dd>
                 <dt>VRAM</dt><dd>{m.vram_mb} MB</dd>
+                {m.n_regs != null ? <><dt>Registers</dt><dd>{m.n_regs} per thread, {m.n_spills} words spilled</dd></> : null}
               </>
             ) : <><dt>Status</dt><dd>{run?.failed ? (run.error === 'timed out' ? 'timed out (15 s harness limit)' : run.error ? `failed: ${run.error}` : 'failed to compile or timed out') : 'running'}</dd></>}
           </dl>

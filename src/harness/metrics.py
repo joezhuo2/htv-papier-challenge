@@ -14,6 +14,8 @@ class Metrics:
     max_error: float | None = None
     adv_error: float | None = None
     vram_mb: float | None = None
+    n_regs: int | None = None  # registers per thread in the compiled kernel
+    n_spills: int | None = None  # 32-bit words spilled to local memory per thread
     latency_std_ms: float | None = None
     max_abs_out: float | None = None
     errors: dict[str, float] = field(default_factory=dict)
@@ -39,7 +41,8 @@ class Metrics:
 
     def contract(self):
         d = {k: getattr(self, k) for k in CONTRACT}
-        return d | ({"speedups": self.speedups, "spreads": self.spreads} if self.speedups else {})
+        d |= {"speedups": self.speedups, "spreads": self.spreads} if self.speedups else {}
+        return d | ({"n_regs": self.n_regs, "n_spills": self.n_spills} if self.n_regs is not None else {})
 
 
 def tflops(M, N, K, latency_ms):

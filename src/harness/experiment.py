@@ -84,13 +84,18 @@ def sweep(spec):
 def measure(spec):
     if spec["target"] == "sweep":
         return sweep(spec)
+    m = Metrics(target=spec["target"])
     if spec["target"] == "eager":
         fn, params = data.eager, None
     else:
         params = kernel.Params(**spec.get("params", {}))
-        fn = lambda x, w, b: kernel.run(params, x, w, b)
+        m.params = params.dict()
 
-    m = Metrics(target=spec["target"], params=params.dict() if params else None)
+        def fn(x, w, b):
+            y, ck = kernel.launch(params, x, w, b)
+            m.n_regs, m.n_spills = ck.n_regs, ck.n_spills
+            return y
+
     for i, (name, M, N, K, scale) in enumerate(data.CASES):
         x, w, b = data.make(M, N, K, scale)
         ref = data.reference(x, w, b)

@@ -22,8 +22,8 @@ def test_naive_all_cases():
 
 
 def test_wrong_bias_fails(monkeypatch):
-    run = kernel.run
-    monkeypatch.setattr(kernel, "run", lambda p, x, w, b: run(p, x, w, b + 0.01))
+    launch = kernel.launch
+    monkeypatch.setattr(kernel, "launch", lambda p, x, w, b: launch(p, x, w, b + 0.01))
     m = experiment.measure({"target": "triton", "params": NAIVE.dict()})
     assert m.compiled_ok and not m.correct_ok
 
@@ -33,6 +33,12 @@ def test_metrics_types():
     c = m.contract()
     assert all(isinstance(c[k], float) for k in ("latency_ms", "tflops", "max_error", "adv_error", "vram_mb"))
     assert all(isinstance(c[k], bool) for k in ("compiled_ok", "correct_ok"))
+
+
+def test_register_and_spill_counts_are_recorded():
+    m = experiment.measure({"target": "triton", "params": Params(256, 256, 64, 8, 2).dict()})
+    assert m.n_regs > 0 and m.n_spills > 0, (m.n_regs, m.n_spills)
+    assert experiment.measure({"target": "eager"}).n_regs is None
 
 
 def test_noise_band(tmp_path):
