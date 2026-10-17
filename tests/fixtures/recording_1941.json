@@ -1,0 +1,543 @@
+{
+ "source": "runs/sessions/20261017-153712/events.jsonl, a recording at 15:37 on 2026-10-17 (saved as runs/war-room-2026-10-17-19-41-25.jsonl and runs/demo.jsonl, max 8 hypotheses), run on commit 4a6268c",
+ "baselines": {
+  "eager": {
+   "latency_ms": 0.6567839980125427,
+   "tflops": 26.15756357643767,
+   "max_error": 0.0015049527864903212,
+   "adv_error": 0.0024911933578550816,
+   "vram_mb": 96.12890625,
+   "compiled_ok": true,
+   "correct_ok": false
+  },
+  "naive": {
+   "latency_ms": 1.9864320158958435,
+   "tflops": 8.648606670917053,
+   "max_error": 0.0004930350696668029,
+   "adv_error": 0.0005225113709457219,
+   "vram_mb": 96.12890625,
+   "compiled_ok": true,
+   "correct_ok": true,
+   "n_regs": 45,
+   "n_spills": 0
+  }
+ },
+ "runs": [
+  {
+   "hypothesis": "H0",
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 4,
+    "stages": 4,
+    "acc": "fp32",
+    "gelu": "exact"
+   },
+   "metrics": {
+    "latency_ms": 0.707071989774704,
+    "tflops": 24.297199482437513,
+    "max_error": 0.0004930350696668029,
+    "adv_error": 0.0005225113709457219,
+    "vram_mb": 96.12890625,
+    "compiled_ok": true,
+    "correct_ok": true,
+    "speedups": {
+     "naive": 2.7611592779182663,
+     "eager": 1.0311594759691924
+    },
+    "spreads": {
+     "naive": 0.02216385934579553,
+     "eager": 0.05466815144733572
+    },
+    "n_regs": 255,
+    "n_spills": 28
+   }
+  },
+  {
+   "hypothesis": "H1",
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 4,
+    "stages": 4,
+    "acc": "fp16",
+    "gelu": "exact"
+   },
+   "metrics": {
+    "latency_ms": 0.45745599269866943,
+    "tflops": 37.555239101035326,
+    "max_error": 0.013175119645893574,
+    "adv_error": 0.0708267092704773,
+    "vram_mb": 96.12890625,
+    "compiled_ok": true,
+    "correct_ok": false,
+    "speedups": {
+     "naive": 4.288599845261766,
+     "eager": 1.6030919479994237,
+     "parent": 1.6050587770052442
+    },
+    "spreads": {
+     "naive": 0.07890099782382687,
+     "eager": 0.07216284354119264,
+     "parent": 0.071218143146571
+    },
+    "n_regs": 255,
+    "n_spills": 12
+   }
+  },
+  {
+   "hypothesis": "H2",
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 64,
+    "warps": 4,
+    "stages": 4,
+    "acc": "fp16",
+    "gelu": "exact"
+   },
+   "metrics": {
+    "latency_ms": 0.5161919891834259,
+    "tflops": 33.281936845198175,
+    "max_error": 0.013175119645893574,
+    "adv_error": 0.0708267092704773,
+    "vram_mb": 96.12890625,
+    "compiled_ok": true,
+    "correct_ok": false,
+    "speedups": {
+     "naive": 3.577578753654691,
+     "eager": 1.3686352209428891,
+     "parent": 1.3576654038684384
+    },
+    "spreads": {
+     "naive": 0.024717525030302463,
+     "eager": 0.027063324365401664,
+     "parent": 0.032358085815119814
+    },
+    "n_regs": 255,
+    "n_spills": 10
+   }
+  },
+  {
+   "hypothesis": "H3",
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 64,
+    "warps": 4,
+    "stages": 4,
+    "acc": "fp32",
+    "gelu": "exact"
+   },
+   "metrics": {
+    "latency_ms": 0.7582239806652069,
+    "tflops": 22.658039869601215,
+    "max_error": 0.0004930350696668029,
+    "adv_error": 0.0005225113709457219,
+    "vram_mb": 96.12890625,
+    "compiled_ok": true,
+    "correct_ok": true,
+    "speedups": {
+     "naive": 2.4274303305231566,
+     "eager": 0.9347207379396775,
+     "parent": 0.9292737577814673
+    },
+    "spreads": {
+     "naive": 0.06822607683805515,
+     "eager": 0.10581607389404964,
+     "parent": 0.08262639716157084
+    },
+    "n_regs": 255,
+    "n_spills": 24
+   }
+  },
+  {
+   "hypothesis": "H4",
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 4,
+    "stages": 4,
+    "acc": "fp32",
+    "gelu": "approx"
+   },
+   "metrics": {
+    "latency_ms": 0.6759999990463257,
+    "tflops": 25.414007704492136,
+    "max_error": 0.0006922456668689847,
+    "adv_error": 0.0007199447718448937,
+    "vram_mb": 96.12890625,
+    "compiled_ok": true,
+    "correct_ok": true,
+    "speedups": {
+     "naive": 2.779500642989039,
+     "eager": 1.0673609637894728,
+     "parent": 1.041088472857427
+    },
+    "spreads": {
+     "naive": 0.026324572101144906,
+     "eager": 0.05186550982100589,
+     "parent": 0.03953832914235668
+    },
+    "n_regs": 255,
+    "n_spills": 0
+   }
+  },
+  {
+   "hypothesis": "H5",
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 8,
+    "stages": 4,
+    "acc": "fp32",
+    "gelu": "exact"
+   },
+   "metrics": {
+    "latency_ms": 0.7396320104598999,
+    "tflops": 23.227590127308893,
+    "max_error": 0.0004930350696668029,
+    "adv_error": 0.0005225113709457219,
+    "vram_mb": 96.12890625,
+    "compiled_ok": true,
+    "correct_ok": true,
+    "speedups": {
+     "naive": 2.540370409649212,
+     "eager": 0.9890866043772465,
+     "parent": 0.9544768594899906
+    },
+    "spreads": {
+     "naive": 0.02776149796525069,
+     "eager": 0.04660782307703269,
+     "parent": 0.03252807966814507
+    },
+    "n_regs": 156,
+    "n_spills": 0
+   }
+  },
+  {
+   "hypothesis": "H6",
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 4,
+    "stages": 5,
+    "acc": "fp32",
+    "gelu": "approx"
+   },
+   "metrics": {
+    "latency_ms": 0.7226880192756653,
+    "tflops": 23.772179316351494,
+    "max_error": 0.0006922456668689847,
+    "adv_error": 0.0007199447718448937,
+    "vram_mb": 96.12890625,
+    "compiled_ok": true,
+    "correct_ok": true,
+    "speedups": {
+     "naive": 2.5827459289298482,
+     "eager": 0.9682062051069203,
+     "parent": 0.9349382742494139
+    },
+    "spreads": {
+     "naive": 0.04979865888373704,
+     "eager": 0.06308717898211048,
+     "parent": 0.06765385904816158
+    },
+    "n_regs": 255,
+    "n_spills": 0
+   }
+  },
+  {
+   "hypothesis": "H7",
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 4,
+    "stages": 3,
+    "acc": "fp32",
+    "gelu": "exact"
+   },
+   "metrics": {
+    "latency_ms": 0.67985600233078,
+    "tflops": 25.269864684729566,
+    "max_error": 0.0004930350696668029,
+    "adv_error": 0.0005225113709457219,
+    "vram_mb": 96.12890625,
+    "compiled_ok": true,
+    "correct_ok": true,
+    "speedups": {
+     "naive": 2.7766685030116887,
+     "eager": 1.029442422998917,
+     "parent": 1.0326830306403199
+    },
+    "spreads": {
+     "naive": 0.06476648030124627,
+     "eager": 0.05680791797608175,
+     "parent": 0.04939832557237523
+    },
+    "n_regs": 255,
+    "n_spills": 28
+   }
+  },
+  {
+   "hypothesis": "H8",
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 4,
+    "stages": 5,
+    "acc": "fp32",
+    "gelu": "exact"
+   },
+   "metrics": {
+    "latency_ms": 0.7255520224571228,
+    "tflops": 23.678342354858863,
+    "max_error": 0.0004930350696668029,
+    "adv_error": 0.0005225113709457219,
+    "vram_mb": 96.12890625,
+    "compiled_ok": true,
+    "correct_ok": true,
+    "speedups": {
+     "naive": 2.5371253498065083,
+     "eager": 0.9616877825500513,
+     "parent": 0.9472112384866647
+    },
+    "spreads": {
+     "naive": 0.047649876488411,
+     "eager": 0.03897845676259724,
+     "parent": 0.03432306249325793
+    },
+    "n_regs": 255,
+    "n_spills": 28
+   }
+  }
+ ],
+ "proposals": [
+  {
+   "id": "H0",
+   "branch": "main",
+   "claim": "Increasing block sizes to 128x128x32 with 4 stages and 4 warps will significantly improve arithmetic intensity and tensor core utilization, speeding up the kernel over the naive baseline.",
+   "prediction": {
+    "min_speedup": 2.0,
+    "vs": "naive",
+    "max_error": 0.001
+   },
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 4,
+    "stages": 4,
+    "acc": "fp32",
+    "gelu": "exact"
+   }
+  },
+  {
+   "id": "H1",
+   "branch": "speed",
+   "claim": "FP16 accumulation on 128x128x32 tiles, 4 warps, 4 stages with exact GELU cuts latency by at least 1.20x against the same config with FP32 accumulation, with standard max error under 2.0e-2, the Speed lens bound.",
+   "prediction": {
+    "min_speedup": 1.2,
+    "vs": "parent_best",
+    "max_error": 0.02
+   },
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 4,
+    "stages": 4,
+    "acc": "fp16",
+    "gelu": "exact"
+   }
+  },
+  {
+   "id": "H2",
+   "branch": "speed",
+   "claim": "Increasing block_k to 64 with fp16 accumulation will improve pipeline throughput and reduce register spills while maintaining accuracy within the 2e-2 bound.",
+   "prediction": {
+    "min_speedup": 1.05,
+    "vs": "parent_best",
+    "max_error": 0.02
+   },
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 64,
+    "warps": 4,
+    "stages": 4,
+    "acc": "fp16",
+    "gelu": "exact"
+   }
+  },
+  {
+   "id": "H3",
+   "branch": "prec",
+   "claim": "Increasing block_k from 32 to 64 while maintaining fp32 accumulation will improve memory throughput and parallelism without exceeding register or shared memory limits, achieving at least 1.05x speedup over parent_best.",
+   "prediction": {
+    "min_speedup": 1.05,
+    "vs": "parent_best",
+    "max_error": 0.001
+   },
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 64,
+    "warps": 4,
+    "stages": 4,
+    "acc": "fp32",
+    "gelu": "exact"
+   }
+  },
+  {
+   "id": "H4",
+   "branch": "speed2",
+   "claim": "Switching from exact GELU to approximate tanh GELU will reduce instruction overhead and improve throughput while keeping error well within the 1e-03 bound.",
+   "prediction": {
+    "min_speedup": 1.05,
+    "vs": "parent_best",
+    "max_error": 0.001
+   },
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 4,
+    "stages": 4,
+    "acc": "fp32",
+    "gelu": "approx"
+   }
+  },
+  {
+   "id": "H5",
+   "branch": "prec",
+   "claim": "Increasing warps to 8 will reduce register pressure and spillage for the 128x128 tile, improving performance while maintaining high precision.",
+   "prediction": {
+    "min_speedup": 1.02,
+    "vs": "parent_best",
+    "max_error": 0.001
+   },
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 8,
+    "stages": 4,
+    "acc": "fp32",
+    "gelu": "exact"
+   }
+  },
+  {
+   "id": "H6",
+   "branch": "speed2",
+   "claim": "Switching to approx GELU and increasing stages to 5 will hide memory latency and improve throughput. Relative to the pivot config (128x128x32 tiles, 4 warps, 4 stages, FP32 accumulation, exact GELU) it changes stages 4 to 5, gelu exact to approx.",
+   "prediction": {
+    "min_speedup": 1.05,
+    "vs": "parent_best",
+    "max_error": 0.001
+   },
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 4,
+    "stages": 5,
+    "acc": "fp32",
+    "gelu": "approx"
+   }
+  },
+  {
+   "id": "H7",
+   "branch": "speed2",
+   "claim": "Reducing pipeline stages from 4 to 3 will decrease pipeline overhead and improve execution efficiency for 128x128x32 tiles. Relative to the pivot config (128x128x32 tiles, 4 warps, 4 stages, FP32 accumulation, exact GELU) it changes stages 4 to 3.",
+   "prediction": {
+    "min_speedup": 1.02,
+    "vs": "parent_best",
+    "max_error": 0.001
+   },
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 4,
+    "stages": 3,
+    "acc": "fp32",
+    "gelu": "exact"
+   }
+  },
+  {
+   "id": "H8",
+   "branch": "main",
+   "claim": "Increasing stages to 5 with exact GELU and FP32 accumulation will improve memory latency hiding and yield a faster execution while staying within error bounds.",
+   "prediction": {
+    "min_speedup": 1.02,
+    "vs": "parent_best",
+    "max_error": 0.001
+   },
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 4,
+    "stages": 5,
+    "acc": "fp32",
+    "gelu": "exact"
+   }
+  }
+ ],
+ "directives": [
+  {
+   "id": "d1",
+   "lens": "speed",
+   "text": "Push throughput harder than tile tuning alone. I can accept max error up to 2e-2."
+  },
+  {
+   "id": "d2",
+   "lens": "precision",
+   "text": "Accuracy matters more than speed here. Keep max error under 1e-3 on every batch, including the adversarial one."
+  },
+  {
+   "id": "d3",
+   "lens": "speed",
+   "text": "Try the tanh approximate GELU. I think it is cheap and the error should stay small."
+  }
+ ],
+ "answers": [
+  {
+   "help": "hq1",
+   "option": "tile_search",
+   "by": "speed"
+  }
+ ],
+ "final_report": {
+  "best": {
+   "run": "r1",
+   "hypothesis": "H0",
+   "branch": "main",
+   "params": {
+    "block_m": 128,
+    "block_n": 128,
+    "block_k": 32,
+    "warps": 4,
+    "stages": 4,
+    "acc": "fp32",
+    "gelu": "exact"
+   },
+   "latency_ms": 0.707071989774704,
+   "vs_naive": 2.81,
+   "vs_eager": 0.93
+  },
+  "next": [
+   "Rerun H4 (gelu exact to approx) with more timing rounds: inconclusive, 1.04x vs its parent sits inside the noise band.",
+   "Rerun H7 (stages 4 to 3) with more timing rounds: inconclusive, 1.03x vs its parent sits inside the noise band.",
+   "Revert stages 4 to 5 and change a knob the ledger has not tried yet."
+  ]
+ }
+}
