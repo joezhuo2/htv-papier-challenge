@@ -528,6 +528,16 @@ def test_seeded_variant_still_runs_on_speed_when_fp16_was_only_tried_on_main(tmp
     assert "Harness variant" in variant["note"] and variant["prediction"]["min_speedup"] == 1.2
 
 
+def test_seeded_variant_waits_for_a_confirmed_configuration(tmp_path):
+    # H0 misses an over-optimistic prediction, so nothing is confirmed and FP16 must not land on the naive tiles
+    o = make(tmp_path, Asker(h(P, 5.0, "naive"), h(P | {"stages": 4}, 9.0, "naive"), h(P | {"warps": 8}, 2.0, "naive"), h(P | {"gelu": "approx"}, 1.0),
+                             default="no json"), main_iters=1, branch_iters=4)
+    run_with(o, [(1, "speed", "Faster.")])
+    on_speed = [e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["branch"] == "speed"]
+    variant = next(x for x in on_speed if x["params"]["acc"] == "fp16")
+    assert variant["params"]["block_m"] == 128 and on_speed.index(variant) == 2
+
+
 def test_runs_request_same_window_references_including_the_parent(tmp_path):
     o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.05)), main_iters=2)
     o.run()

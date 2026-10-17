@@ -429,9 +429,10 @@ class Orchestrator:
         start, metrics = self.start_point(b.id)
         tried_all = {json.dumps(h.params.dict(), sort_keys=True) for h in self.hyps}
         hint = self.hints.pop(b.id, None)
-        # a human suggestion goes first, the seeded FP16 variant waits for a later iteration
+        # a human suggestion goes first, the seeded FP16 variant waits for a later iteration and for a confirmed configuration,
+        # since FP16 on the naive tiles measures nothing about accumulation
         tested = any(h.params.acc == "fp16" and self.branches[h.branch].lens == "speed" for h in self.hyps)
-        if not hint and b.lens == "speed" and b.iters >= 2 and not tested and start.acc == "fp32":
+        if not hint and b.lens == "speed" and b.iters >= 2 and not tested and start.acc == "fp32" and self.best_run(b.id):
             p = replace(start, acc="fp16")
             if json.dumps(p.dict(), sort_keys=True) not in tried_all:
                 return self.new_hyp(b, "FP16 accumulation on the best configuration so far will cut latency by at least 1.2x and stay under the Speed tolerance.",
