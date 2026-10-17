@@ -12,8 +12,8 @@ CACHE = ROOT / "runs" / "llm_cache"
 BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 load_dotenv(ROOT / ".env")
-FAST_MODEL = os.environ.get("FAST_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
-STRONG_MODEL = os.environ.get("STRONG_MODEL", "deepseek-ai/deepseek-v4.1-flash")
+FAST_MODEL = os.environ.get("FAST_MODEL", "openai/gpt-oss-20b")
+STRONG_MODEL = os.environ.get("STRONG_MODEL", "google/gemma-4-31b-it")
 
 # Per-model request extras. Nemotron reasons by default and spends the whole budget on reasoning_content.
 EXTRA = {

@@ -4,6 +4,7 @@ import json
 import re
 import statistics
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import openai
@@ -11,16 +12,17 @@ import openai
 from agent.llm import Client
 from harness import runner
 from harness.kernel import ACC, GELU, NAIVE, Params
+from harness.metrics import Metrics
 
 MODELS = {
     "nvidia/nemotron-3.5-lightning-30b-a3b": 120,
-    "deepseek-ai/deepseek-v4.1-flash": 240,
     "openai/gpt-oss-20b": 120,
-    "z-ai/glm-5.3-flash": 120,
     "google/gemma-4-31b-it": 120,
 }
 TRIALS = 10
 GIVE_UP = 3
+BUDGET_S = 360
+NAIVE_FILE = runner.RUNS / "model_bench_naive.json"
 
 SYSTEM = f"""You are a GPU kernel research agent tuning a fused Triton kernel computing gelu(x @ w + b) in FP16 on an RTX 5060 laptop GPU (Blackwell, 8 GB). Shape M = N = K = 2048.
 You may only edit these parameters:
@@ -62,8 +64,11 @@ def parse(text):
 
 
 def trials(client, model, prompt):
-    out, fails = [], 0
+    out, fails, t0 = [], 0, time.monotonic()
     for i in range(TRIALS):
+        if time.monotonic() - t0 > BUDGET_S:
+            print(f"  {model}: stopping after {i} trials, over the {BUDGET_S} s budget", file=sys.stderr, flush=True)
+            break
         try:
             r = client.complete(prompt, model=model, tag=f"trial{i}", max_tokens=2048)
         except (openai.APITimeoutError, openai.APIConnectionError, openai.APIStatusError) as e:
@@ -79,7 +84,12 @@ def trials(client, model, prompt):
 
 
 def main():
-    naive = runner.run({"target": "triton", "params": NAIVE.dict()})
+    # The naive result is pinned to a file so the prompt, and with it the response cache, stays stable across reruns.
+    if NAIVE_FILE.exists():
+        naive = Metrics.from_dict(json.loads(NAIVE_FILE.read_text()))
+    else:
+        naive = runner.run({"target": "triton", "params": NAIVE.dict()})
+        NAIVE_FILE.write_text(json.dumps(naive.dict()))
     last = naive.contract()
     prompt = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user_prompt(NAIVE.dict(), last)}]
 
@@ -109,6 +119,7 @@ def main():
             "valid_json_rate": len(valid) / len(rs),
             "compile_rate": sum(m.compiled_ok for m in runs) / len(rs),
             "correct_rate": sum(m.correct_ok for m in runs) / len(rs),
+            "max_latency_s": max(live) if live else None,
             "invalid_reasons": [r["invalid"] for r in answered if r["invalid"]],
             "edits": [{"params": r["hypothesis"]["params"], "latency_ms": m.latency_ms, "max_error": m.max_error,
                        "speedup_vs_naive": round(naive.latency_ms / m.latency_ms, 2) if m.latency_ms else None, "run_id": m.run_id}
