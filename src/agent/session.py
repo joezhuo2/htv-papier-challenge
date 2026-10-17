@@ -18,34 +18,54 @@ from agent.orchestrator import Orchestrator
 from harness import noise, runner
 
 LLM_TIMEOUT_S = float(os.environ.get("LLM_TIMEOUT_S", "180"))
+# post-mortem prose is optional (a factual template stands in), so it gets one fast try instead of a chain of slow fallbacks
+STRONG_TIMEOUT_S = float(os.environ.get("STRONG_TIMEOUT_S", "15"))
+TIMEOUTS = {"fast": LLM_TIMEOUT_S, "strong": STRONG_TIMEOUT_S}
+DOWN_S = 300.0
+# errors that will not fix themselves within a session: the route is dropped for good
+FATAL = ("PermissionDeniedError", "BadRequestError", "AuthenticationError", "NotFoundError")
 
 
 def chains():
-    """Role to [(provider, model)] in order of preference: OmniRoute (unless OMNIROUTE=0), then Gemini when its key is set, then NIM."""
+    """Role to [(provider, model)] in order of preference. Hypotheses: OmniRoute (unless OMNIROUTE=0), then Gemini when its key is
+    set, then NIM. Post-mortems: pinned to Gemini's strong model when its key is set, NIM otherwise."""
     omni = [("omniroute", OMNIROUTE_MODEL)] if available("omniroute") else []
     gem = available("gemini")
     return {
         "fast": omni + ([("gemini", GEMINI_FAST_MODEL)] if gem else []) + [("nim", FAST_MODEL)],
-        "strong": omni + ([("gemini", GEMINI_STRONG_MODEL)] if gem else []) + [("nim", STRONG_MODEL)],
+        "strong": [("gemini", GEMINI_STRONG_MODEL)] if gem else [("nim", STRONG_MODEL)],
     }
 
 
-def asker(log, roles=None):
-    """ask(messages, role, tag): tries each provider for the role in turn and logs a fallback, so a Gemini outage costs one retry."""
+def asker(debug, roles=None):
+    """ask(messages, role, tag): tries each live provider for the role in turn. A route that fails is skipped for DOWN_S, or for the
+    rest of the session on a permission or bad request error, so a broken gateway costs one failed call, not one per call.
+    Failovers are written to the debug file, not the replay."""
     roles = roles or chains()
-    clients = {}
+    clients, down = {}, {}
+
+    def note(text):
+        with open(debug, "a") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {text}\n")
 
     def ask(messages, role, tag):
+        chain = roles[role]
+        live = [x for x in chain if down.get(x[0], 0) <= time.monotonic()] or chain[-1:]
         last = None
-        for i, (provider, model) in enumerate(roles[role]):
+        for provider, model in live:
             try:
-                client = clients.setdefault(provider, Client(timeout=LLM_TIMEOUT_S, max_retries=1, provider=provider))
+                final = (provider, model) == chain[-1]
+                client = clients.setdefault((provider, role), Client(timeout=TIMEOUTS[role], max_retries=1 if final else 0, provider=provider))
                 text = client.complete(messages, model=model, tag=tag, max_tokens=2048)["text"]
-                if i:
-                    log.emit("agent_log", text=f"{roles[role][0][1]} failed ({type(last).__name__}), answered by {model} on {provider}.")
+                if last:
+                    note(f"{role}: {type(last).__name__} on an earlier route, answered by {model} on {provider}")
                 return text
             except Exception as e:  # noqa: BLE001, try the next provider, the last failure propagates
                 last = e
+                fatal = type(e).__name__ in FATAL
+                down[provider] = float("inf") if fatal else time.monotonic() + DOWN_S
+                note(f"{role}: {model} on {provider} failed ({type(e).__name__}: {str(e)[:160]}), "
+                     + ("dropped for the session" if fatal else f"skipped for {DOWN_S:.0f} s"))
         raise last
 
     return ask
@@ -57,6 +77,6 @@ def new(sid=None, **kw) -> Orchestrator:
         while (runner.RUNS / "sessions" / sid).exists():  # a restart within the same second
             sid += "b"
     log = Log(runner.RUNS / "sessions" / sid / "events.jsonl")
-    return Orchestrator(lambda spec, run_id: runner.run(spec, run_id=run_id), asker(log), log, f"sessions/{sid}",
+    return Orchestrator(lambda spec, run_id: runner.run(spec, run_id=run_id), asker(log.path.with_name("debug.log")), log, f"sessions/{sid}",
                         "fast", "strong", noise.band(), context=papiers.search if papiers.binary() else None,
                         headroom=noise.headroom(), **kw)
