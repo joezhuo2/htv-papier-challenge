@@ -356,8 +356,8 @@ def test_websocket_sends_history_then_streams_and_accepts_commands(tmp_path):
 
 def test_pivots_stop_at_three_branches_per_lens(tmp_path):
     fp16 = {"acc": "fp16"}
-    o = make(tmp_path, Asker(h(P, 2.0, "naive"), *[h(P | fp16 | {"warps": w}) for w in (1, 2, 8, 16)], default="no json"),
-             main_iters=1, branch_iters=1)
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), *[h(P | fp16 | {"warps": w}, claim=f"Unlike H1, H2 and H3, {w} warps.") for w in (1, 2, 8, 16)],
+                             default="no json"), main_iters=1, branch_iters=1)
     run_with(o, [(1, "precision", "Strict."), (1, "speed", "Faster.")])
     assert [b for b in o.branches if b.startswith("speed")] == ["speed", "speed2", "speed3"]
 
@@ -1326,3 +1326,63 @@ def test_a_rejudge_that_flips_several_runs_reissues_each_help_request_once(tmp_p
     o.add_directive("precision", "Max error under 1e-3 on both batches.")
     assert [e["help"]["id"] for e in of(o, "help_requested")] == ["hq1", "hq1"]
     assert of(o, "help_requested")[1]["help"]["blocks"] == "speed2"
+
+
+def ledger_state(tmp_path, **kw):
+    """H0 on main, H1 (stages 4) slower than H0 on speed, H2 (warps 8 with stages 4) rejected on speed."""
+    from agent.orchestrator import Branch, Hyp
+    from harness.kernel import Params
+    o = make(tmp_path, Asker(), **kw)
+    o.naive = met(1.891)
+    for b in (Branch("main", [], "Baseline", "both"), Branch("speed", ["main"], "Speed lens", "speed")):
+        o.branches[b.id] = b
+    base = Params(**P)
+    rows = [("main", base, None, 0.642, 2.95, "naive", 200, 0), ("speed", Params(**P | {"stages": 4}), base, 0.70, 0.92, "parent", 210, 0),
+            ("speed", Params(**P | {"stages": 4, "warps": 8}), base, 0.66, 0.97, "parent", 180, 12)]
+    for i, (bid, p, parent, lat, sp, ref, regs, spills) in enumerate(rows):
+        m = Metrics.from_dict(met(lat).dict() | {"n_regs": regs, "n_spills": spills})
+        x = Hyp(f"H{i}", bid, "c", {"min_speedup": 1.02 if parent else 2.0, "vs": "parent_best" if parent else "naive", "max_error": 1e-3},
+                p, run=f"r{i + 1}", metrics=m, speedup=sp, noise=BAND, base=parent, ref=ref)
+        x.judgment = judge(x.prediction, m, sp, BAND, 1e-3, None)
+        o.hyps.append(x)
+    return o
+
+
+def test_the_proposer_sees_the_whole_ledger_with_registers_and_spills(tmp_path):
+    o = ledger_state(tmp_path)
+    rows = o.ledger()
+    assert [r["id"] for r in rows] == ["H0", "H1", "H2"] and rows[1]["change"] == "stages 3 to 4"
+    assert rows[2] | {"params": None} == {"id": "H2", "branch": "speed", "params": None, "change": "warps 4 to 8, stages 3 to 4",
+                                          "outcome": "rejected, 0.97x vs its parent", "n_regs": 180, "n_spills": 12}
+    o.branches["speed2"] = __import__("agent.orchestrator", fromlist=["Branch"]).Branch("speed2", ["main"], "Speed lens", "speed")
+    o.ask = Asker(h(P | {"block_k": 64}, 1.05))
+    o.propose(o.branches["speed2"])
+    content = o.ask.calls[0][2][1]["content"]
+    assert '"id": "H2", "branch": "speed"' in content and '"n_spills": 12' in content and "on any branch" in content
+
+
+def test_duplicates_and_known_harmful_knobs_are_refused_with_a_logged_reason(tmp_path):
+    from harness.kernel import Params
+    o = ledger_state(tmp_path)
+    start = o.hyps[0].params
+    assert o.vet(start, Params(**P | {"stages": 4}), "x").startswith("128x128x32 tiles, 4 warps, 4 stages, FP32 accumulation, exact GELU already ran as H1")
+    assert o.vet(start, Params(**P | {"block_k": 64}), "x") is None  # block_k 64 was never shown to hurt
+    assert o.vet(Params(**P | {"warps": 8}), Params(**P | {"warps": 8, "stages": 4, "gelu": "approx"}), "H1 aside") is None
+    why = o.vet(start, Params(**P | {"stages": 4, "block_k": 64}), "Deeper pipelining hides latency.")
+    assert why == "the claim sets stages 4, which H1 showed hurts (rejected, 0.92x vs its parent), without citing H1; cite it and say why this case differs"
+    assert o.vet(start, Params(**P | {"stages": 4, "block_k": 64}), "Unlike H1, block_k 64 halves the loop count, so 4 stages pay off.") is None
+    o.ask = Asker(h(P | {"stages": 4, "block_k": 64}, 1.05), h(P | {"block_k": 64}, 1.05))
+    o.propose(o.branches["speed"])
+    assert any(e["text"].startswith("Refused a proposal on speed: the claim sets stages 4, which H1") for e in of(o, "agent_log"))
+    assert "Invalid: the claim sets stages 4" in o.ask.calls[1][2][-1]["content"]
+
+
+def test_a_rejected_config_with_one_more_harmful_knob_is_refused(tmp_path):
+    from agent.verdict import judge as j
+    from harness.kernel import Params
+    o = ledger_state(tmp_path)
+    x = o.hyps[2]
+    x.params = Params(**P | {"warps": 8})
+    x.judgment = j(x.prediction, x.metrics, 0.97, BAND, 1e-3, None)
+    why = o.vet(Params(**P | {"block_k": 64}), Params(**P | {"warps": 8, "stages": 4}), "Cites H1 and H2.")
+    assert why == "it is the rejected H1 with only warps 4 to 8, a change H2 already showed hurts (rejected, 0.97x vs its parent)"

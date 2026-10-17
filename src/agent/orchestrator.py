@@ -936,12 +936,10 @@ class Orchestrator:
             self.reserved.discard(hint[2])
             hint = None
 
-        tried = [{"params": h.params.dict(), "verdict": h.judgment.verdict, "metrics": h.metrics.contract()}
-                 for h in self.hyps if h.branch == b.id and h.judgment and h.metrics.latency_ms]
         directives = [d for d in self.directives if b.lens in ("both", d["lens"])]
         planned = facet(start, replace(start, **{k: v for k, v in hint[3].items() if k in start.dict()})) if hint and hint[3] else None
         notes = self.papiers(planned or QUERIES[b.lens])
-        messages = hyp.prompt(b.dict(), directives, {"params": start.dict(), "metrics": metrics.contract()}, tried, self.avoid,
+        messages = hyp.prompt(b.dict(), directives, {"params": start.dict(), "metrics": metrics.contract()}, self.ledger(), self.avoid,
                               ([f"Suggestion from a human lens owner, test this next: {hint[0]}"] if hint and hint[3] is not None else [])
                               + [f"Papiers {n['id']} ({n['title']}): {n['excerpt']}" for n in notes], self.bounds(b.lens)["standard"], self.headroom)
         why, first = "", ""
@@ -952,8 +950,10 @@ class Orchestrator:
                     self.hints[b.id] = hint
                 return None
             h, why = hyp.parse(text)
-            if h and json.dumps(h["params"].dict(), sort_keys=True) in tried_all:
-                h, why = None, "that configuration was already tried"
+            refused = h and self.vet(start, h["params"], h["claim"])
+            if refused:
+                h, why = None, refused
+                self.log.emit("agent_log", text=f"Refused a proposal on {b.id}: {why}.")
             if h:
                 cite = hint[1] if hint else None
                 claim = h["claim"]
@@ -973,6 +973,54 @@ class Orchestrator:
         if hint and hint[3] is not None:
             self.log.emit("plan_change", help=hint[2], text=f"I could not turn \"{hint[0][:120]}\" into a valid configuration on {b.id} ({why}), so it is not tested.")
         self.log.emit("agent_log", text=f"No valid hypothesis for branch {b.id} after 3 attempts ({why}). Closing the branch.")
+        return None
+
+    def outcome(self, h):
+        if h.metrics.latency_ms is None:
+            return "failed to run"
+        sp = f", {h.speedup:.2f}x vs {'naive' if h.ref == 'naive' else 'its parent'}" if h.speedup else ""
+        return f"{'provisionally confirmed' if h.judgment.provisional else h.judgment.verdict}{sp}"
+
+    def ledger(self):
+        """Every judged run on any branch, for the proposer: what changed, the verdict, the same-window speedup, registers and spills."""
+        return [{"id": h.id, "branch": h.branch, "params": h.params.dict(), "change": change(self.baseline(h)[0], h.params),
+                 "outcome": self.outcome(h), "n_regs": h.metrics.n_regs, "n_spills": h.metrics.n_spills}
+                for h in self.hyps if h.judgment]
+
+    def hurts(self):
+        """{(knob, value): hypothesis} for runs that changed only that knob from what they were timed against and failed, broke an error
+        bound, or ran measurably slower than their parent. The latest such run wins."""
+        out = {}
+        for h in self.hyps:
+            if not h.judgment:
+                continue
+            keys = [k for k in h.params.dict() if getattr(h.params, k) != getattr(self.baseline(h)[0], k)]
+            bad = (h.metrics.latency_ms is None or any(c.passed is False and "error" in c.name for c in h.judgment.checks)
+                   or (h.ref == "parent" and h.speedup is not None and h.speedup < 1 - h.noise))
+            if len(keys) == 1 and bad:
+                out[(keys[0], getattr(h.params, keys[0]))] = h
+        return out
+
+    def vet(self, start: Params, p: Params, claim):
+        """Why a proposal is refused before it runs, or None: an exact repeat, a rejected config with one more knob that already hurt,
+        or a claim that sets a knob to a value shown to hurt without citing the run that showed it."""
+        ran = next((x for x in self.hyps if x.params == p), None)
+        if ran:
+            return f"{params_text(p)} already ran as {ran.id} on {ran.branch} ({self.outcome(ran) if ran.judgment else 'running'})"
+        hurt = self.hurts()
+        for x in self.hyps:
+            if not (x.judgment and x.judgment.verdict == "rejected"):
+                continue
+            keys = [k for k in p.dict() if getattr(p, k) != getattr(x.params, k)]
+            if len(keys) == 1 and (e := hurt.get((keys[0], getattr(p, keys[0])))):
+                k = keys[0]
+                return (f"it is the rejected {x.id} with only {k} {getattr(x.params, k)} to {getattr(p, k)}, a change {e.id} already showed hurts "
+                        f"({self.outcome(e)})")
+        for k in p.dict():
+            e = hurt.get((k, getattr(p, k)))
+            if getattr(start, k) != getattr(p, k) and e and not re.search(rf"\b{e.id}\b", claim):
+                return (f"the claim sets {setting(p, k)}, which {e.id} showed hurts ({self.outcome(e)}), without citing {e.id}; "
+                        f"cite it and say why this case differs")
         return None
 
     def retest(self, b, start, hint, tried_all):

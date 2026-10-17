@@ -26,7 +26,8 @@ For example 128x256x64 with 4 stages needs 147456 bytes and does not fit, 128x12
 Registers: each thread holds block_m * block_n / (warps * 32) accumulator elements, at most {ACC_LIMIT["fp32"]} with fp32 and {ACC_LIMIT["fp16"]} with fp16 accumulation, or the kernel spills to local memory and runs about 10x slower.
 For example 128x256 with 4 warps puts 256 fp32 elements on each thread and is refused, 128x256 with 8 warps puts 128 and is allowed.
 Before any run, state a falsifiable hypothesis with thresholds. The harness, not you, decides whether it held.
-Never propose a configuration listed as already tried.
+Never propose a configuration listed in the ledger, and never take a rejected configuration and change only a knob the ledger shows hurt.
+If your change sets a knob to a value the ledger shows hurt (a run that changed only that knob and failed, broke the error bound or ran slower than its parent), the claim must cite that hypothesis id and say why this case differs.
 min_speedup is the ratio start latency / new latency you expect. Against "parent_best" a realistic value is between 1.02 and 2.0. Against "naive" it is between 1.1 and 10.
 Reply with only a JSON object, no prose, in this exact shape:
 {{"claim": "<one sentence>", "explanation": "<two or three sentences on why you expect this>", "prediction": {{"min_speedup": <float>, "vs": "naive" or "parent_best", "max_error": <float>}}, "params": {{"block_m": int, "block_n": int, "block_k": int, "warps": int, "stages": int, "acc": str, "gelu": str}}}}"""
@@ -48,13 +49,14 @@ def headroom_line(h):
             f"({e['min']:.2f} to {e['max']:.2f}). Keep predictions physically plausible against this.")
 
 
-def prompt(branch, directives, start, tried, avoid, notes=(), bound=1e-3, headroom=None):
+def prompt(branch, directives, start, ledger, avoid, notes=(), bound=1e-3, headroom=None):
+    """ledger: every run this session on any branch, as rows from Orchestrator.ledger()."""
     lines = [
         f"Branch: {branch['id']} ({branch['label']}).",
         f"Error bound on this branch, set by its lens: max_error under {bound:.0e} on the standard batch. Use it as prediction.max_error.",
         f"Start from these parameters: {json.dumps(start['params'])}, measured {json.dumps(brief(start['metrics']))}.",
         "Directives: " + ("; ".join(f"{d['lens']} lens: {d['text']}" for d in directives) or "none yet, improve throughput while keeping max_error under 1e-3 on the standard batch."),
-        "Already tried: " + (json.dumps([{"params": t["params"], "verdict": t["verdict"], **brief(t["metrics"])} for t in tried]) if tried else "nothing on this branch"),
+        "Ledger of every configuration run this session, on any branch: " + (json.dumps(ledger) if ledger else "nothing yet"),
     ]
     if headroom:
         lines.append(headroom_line(headroom))
