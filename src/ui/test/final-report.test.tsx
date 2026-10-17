@@ -37,3 +37,13 @@ describe('final report', () => {
     expect(screen.getByTestId('best-label')).toBeTruthy()
   })
 })
+
+describe('one metric for speedups', () => {
+  it('shows vs naive and vs eager from the session baselines, so a run never outranks the best on screen', async () => {
+    const { windowText } = await import('../src/state/derive')
+    const m = { latency_ms: 0.5, tflops: 1, max_error: 0, adv_error: 0, vram_mb: 1, compiled_ok: true, correct_ok: true,
+      speedups: { parent: 1.1, naive: 2.69, eager: 1.2 }, spreads: { parent: 0.02 } }
+    const base = { naive: { ...m, latency_ms: 1.3 }, eager: { ...m, latency_ms: 0.6 } }
+    expect(windowText(m, base)).toBe('1.10x +/- 0.02x vs best (same window), 2.60x vs naive, 1.20x vs eager')
+  })
+})

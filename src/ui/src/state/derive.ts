@@ -122,13 +122,14 @@ export const ruledOut = (v: View, hyp: string) => {
   return keys.map(k => `${k} ${h.params[k]}`).join(', ') + ` (the ${next.id} pivot keeps everything else)`
 }
 
-// same-window speedups with their measured spread, e.g. "1.45x +/- 0.02x vs best, 3.10x vs naive, 1.05x vs eager"
-export const windowText = (m: Metrics) => {
-  const names = { parent: 'best', naive: 'naive', eager: 'eager' } as const
-  return (['parent', 'naive', 'eager'] as const)
-    .filter(k => m.speedups?.[k] !== undefined)
-    .map(k => `${times(m.speedups![k]!)} +/- ${(m.speedups![k]! * (m.spreads?.[k] ?? 0)).toFixed(2)}x vs ${names[k]}`)
-    .join(', ')
+// "1.45x +/- 0.02x vs best (same window), 3.10x vs naive, 1.05x vs eager": the verdict's same-window ratio to the parent, and naive and
+// eager as the session baselines' latency over this run's, the metric the best run is ranked by, so no run shows a higher vs naive than the best
+export const windowText = (m: Metrics, base?: { naive: Metrics; eager: Metrics }) => {
+  const parent = m.speedups?.parent
+  return [
+    parent === undefined ? '' : `${times(parent)} +/- ${(parent * (m.spreads?.parent ?? 0)).toFixed(2)}x vs best (same window)`,
+    ...(base ? (['naive', 'eager'] as const).map(k => `${times(base[k].latency_ms / m.latency_ms)} vs ${k}`) : []),
+  ].filter(Boolean).join(', ')
 }
 
 const GENERIC_TITLE = /^(conversation( overview| messages)?|untitled)?$/i

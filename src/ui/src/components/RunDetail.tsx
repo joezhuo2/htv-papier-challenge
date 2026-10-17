@@ -32,7 +32,7 @@ export function RunDetail({ view, onClose }: { view: View; onClose: () => void }
             {m ? (
               <>
                 <dt>Latency</dt><dd>{ms(m.latency_ms)}, {m.tflops.toFixed(1)} TFLOPS</dd>
-                {m.speedups ? <><dt>Speedup</dt><dd>{windowText(m)}, same timing window</dd></> : null}
+                {m.speedups ? <><dt>Speedup</dt><dd>{windowText(m, view.baselines)}</dd></> : null}
                 <dt>Error</dt><dd>max {sci(m.max_error)}, adversarial {sci(m.adv_error)}</dd>
                 <dt>VRAM</dt><dd>{m.vram_mb} MB</dd>
                 {m.n_regs != null ? <><dt>Registers</dt><dd>{m.n_regs} per thread, {m.n_spills} words spilled</dd></> : null}

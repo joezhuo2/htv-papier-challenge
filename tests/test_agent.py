@@ -1517,3 +1517,20 @@ def test_a_post_mortem_cites_the_retrieved_item_that_best_matches_its_cause():
     assert Orchestrator.best_note(items, "It spills 40 words per thread to local memory.")["id"] == "hl_a"
     assert Orchestrator.best_note(items, "Adversarial error grows with K: accumulation length.")["id"] == "hl_b"
     assert Orchestrator.best_note([], "anything") is None
+
+
+def test_the_best_run_is_ranked_by_latency_and_reported_with_the_same_metric(tmp_path):
+    class Windows(Engine):
+        """r2 is faster in absolute latency, but its window measured naive slower, so its same-window ratio is the higher one for r3."""
+        def __call__(self, spec, run_id):
+            m = super().__call__(spec, run_id)
+            if spec.get("refs") and m.latency_ms and spec["params"] != P:
+                m.speedups["naive"] = {0.628: 2.66, 0.640: 2.69}[m.latency_ms]
+            return m
+
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"warps": 8}, 2.0, "naive"), h(P | {"stages": 4}, 2.0, "naive"), default="no json"),
+             engine=Windows(), main_iters=3)
+    o.run()
+    best = of(o, "session_finished")[0]["best"]
+    assert best == {"run": "r2", "vs_naive": round(1.891 / 0.628, 2), "vs_eager": round(0.669 / 0.628, 2)}
+    assert of(o, "final_report")[0]["report"]["best"]["run"] == "r2" and of(o, "final_report")[0]["report"]["best"]["vs_naive"] == best["vs_naive"]

@@ -79,7 +79,7 @@ function SummaryCard({ view, item, onSelectRun, onPostMortem, collapsed, onToggl
               {ms(m.latency_ms)}, {m.tflops.toFixed(1)} TFLOPS, max error {sci(m.max_error)}, adversarial {sci(m.adv_error)}
             </dd>
             <dt><Def term="speedup">Delta</Def></dt>
-            {m.speedups ? <dd data-testid="window-speedups"><Def term="noise">{windowText(m)}</Def>, same timing window</dd> : <dd>
+            {m.speedups ? <dd data-testid="window-speedups"><Def term="noise">{windowText(m, view.baselines)}</Def></dd> : <dd>
               {base ? <>{times(base / m.latency_ms)} vs previous best ({ms(base)})</> : naive ? <>{times(naive / m.latency_ms)} vs naive</> : null}
               {eager ? <>, {times(eager / m.latency_ms)} vs eager</> : null}
             </dd>}

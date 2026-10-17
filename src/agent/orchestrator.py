@@ -459,7 +459,9 @@ class Orchestrator:
                 self.summarize(h, self.branches[h.branch], "Session stopped before the next step." if self.stopped else "Session finished.")
         ledger = [{"hypothesis": h.id, "verdict": h.judgment.verdict, "history": h.history} for h in self.hyps if h.judgment]
         best = self.best_run()
-        out = {"run": best.run, "vs_naive": round(best.metrics.speedups["naive"], 2), "vs_eager": round(best.metrics.speedups["eager"], 2)} if best else {"run": "naive", "vs_naive": 1.0, "vs_eager": round(self.eager.latency_ms / self.naive.latency_ms, 2)}
+        lat = best.metrics.latency_ms if best else self.naive.latency_ms
+        # one metric for the best run everywhere: confirmed runs are ranked by latency, and the ratios are the baselines' latency over it
+        out = {"run": best.run if best else "naive", "vs_naive": round(self.naive.latency_ms / lat, 2), "vs_eager": round(self.eager.latency_ms / lat, 2)}
         if ledger:
             self.export([("ledger", f"Hypothesis ledger {self.hyps[0].id} to {self.hyps[-1].id}", "ledger.md",
                           ex.ledger_md(self.hyps, out if best else None, self.naive.latency_ms, self.eager.latency_ms))]
@@ -746,6 +748,7 @@ class Orchestrator:
         return seen
 
     def best_run(self, branch=None):
+        """The best confirmed run, ranked by absolute latency. The only ranking used for the session's best, its parents and the hybrid."""
         ok = [h for h in self.hyps if h.judgment and h.judgment.verdict == "confirmed" and not h.judgment.provisional
               and (branch is None or h.branch in self.lineage(branch))]
         return min(ok, key=lambda h: h.metrics.latency_ms) if ok else None
