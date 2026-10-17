@@ -25,3 +25,11 @@
 10. `plan_change.help` is the id it answers: a help request (`hq1`) or a directive (`d2`) for hunch replies.
 11. Failed runs get a `post_mortem` with an empty sweep. Every branch has a final `branch_status` before `session_finished`, and provider failover lines are no longer `agent_log` events.
 - Failed runs send null metric fields although `Metrics` types them as numbers.
+
+## Changes made at 11:10 to 11:45
+
+12. `Metrics` gains optional `n_regs` and `n_spills` from the compiled Triton kernel (absent for eager).
+13. New event `help_cancelled { help, reason }`: a pending request withdrawn after a flip rejected its branch with no successor. A reissued request is a second `help_requested` with the same id, which the UI replaces in place.
+14. `papiers_context.note` is `PapiersNote { id, title, excerpt, kind?, document_title?, highlight_text?, annotation? }`. Old logs without the new fields stay valid.
+15. `PostMortem` gains optional `note`, the Papiers id retrieved for the measured cause.
+16. Hypothesis notes cite "Context from Papiers <kind> <id>", and constraint-only directives are noted "Tested under the <lens> lens bound set by <id>" instead of "Hunch from".

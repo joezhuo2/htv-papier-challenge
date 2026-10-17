@@ -1111,6 +1111,7 @@ def test_an_empty_library_returns_nothing_and_the_hypothesis_cites_nothing(tmp_p
 
 def test_a_cli_error_is_logged_and_the_loop_continues(tmp_path):
     import subprocess
+
     from agent.papiers import Library
     o = make(tmp_path, Asker(h(P, 2.0, "naive")), main_iters=1, context=Library(CLI({}, fail=subprocess.CalledProcessError(1, "papiers"))).retrieve)
     o.run()

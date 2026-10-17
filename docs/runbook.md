@@ -42,6 +42,14 @@ Start session is the table demo (capped by `MAX_HYPS`). Start recording runs H0,
 
 Server settings: `AUTOSTART=1` (start without the UI), `MAX_HYPS` (default 1, set it empty for an uncapped session), `RECORD_HYPS` (8), `MAIN_ITERS` (2), `BRANCH_ITERS` (3), `IDLE_S` (600), `HELP_DEADLINE_S` (45). Each server start is a new session and uses the GPU. If the UI keeps showing "No agent server is reachable at /ws", the server is not running.
 
+## Scripted recording
+
+With the server running, `agent.drive` plays both lenses over the websocket (Speed directive after H0, Precision on the first provisional verdict, the tanh GELU hunch, keep tuning on every help request, approve the hybrid) and prints every event. The replay is `runs/sessions/<id>/replay.jsonl`.
+
+```bash
+uv run python -m agent.drive
+```
+
 ## Headless sessions
 
 ```bash
@@ -100,7 +108,9 @@ papiers auth status
 papiers search "FP16 accumulation" --json
 ```
 
-The CLI is read-only. The account currently holds one conversation (a summary of the Triton matmul tutorial), no notes and no highlights.
+The CLI is read-only. As of 11:45 the account holds 5 highlights (none annotated), 0 notes, 6 documents and 0 conversations, and passage search returns nothing. Useful checks: `papiers list --kind highlight --json`, `papiers search "accumulation precision FP16" --kind highlight --json`, `papiers read hl_<id> --json` (shows `annotationText`).
+
+Eager error by rounding step: `uv run python -m harness.eager_error`.
 
 ## Screenshots
 

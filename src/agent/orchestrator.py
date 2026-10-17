@@ -18,7 +18,14 @@ from agent import hypothesis as hyp
 from agent.events import Log
 from agent.verdict import Judgment, judge, sci
 from harness.data import BOUND
-from harness.kernel import NAIVE, SMEM_LIMIT, Params, acc_per_thread, fit_stages, smem_bytes
+from harness.kernel import (
+    NAIVE,
+    SMEM_LIMIT,
+    Params,
+    acc_per_thread,
+    fit_stages,
+    smem_bytes,
+)
 from harness.metrics import Metrics
 from harness.runner import TIMEOUT_S
 

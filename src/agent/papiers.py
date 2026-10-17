@@ -14,7 +14,7 @@ from pathlib import Path
 
 # lower ranks first: an annotated highlight carries the user's own words, a note is theirs entirely
 RANK = {"annotated highlight": 0, "note": 1, "highlight": 2, "passage": 3, "conversation": 4}
-STOP = set("a an and are as at be by for from in is it of on or the to with".split())
+STOP = {"a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "the", "to", "with"}
 
 
 def binary():
