@@ -49,11 +49,22 @@ Durations are real and compressed with the current player (idle gaps over 4 s sh
 | runs/live1.jsonl | 9:15 | 3:06 | 15 | yes | 3 / 3 | no | 0 | older code, long, best approximate GELU number |
 | runs/record1.jsonl | 7:43 | 1:41 | 8 | yes | 1 / 1 | no | 1 | shared memory compile failure (now prevented) |
 | runs/live2.jsonl | 6:24 | 1:46 | 8 | yes | 0 / 0 | no | 0 | no help request |
+| 17:07, `war-room-2026-10-17-17-07-33.jsonl` (suggested slot: fallback1) | 2:32 | 1:34 | 8 | yes | 1 / 1 | not proposed | 0 | recorded on the code before the 16:30 fixes (not pulled); flip at 65.2 s; annotated highlights cited; best confirmed H0 at 2.72x vs naive and 1.02x vs eager, nothing after it beat it; the GELU hunch was not retested |
 | runs/fallback1.jsonl (16:00, `war-room-2026-10-17-16-00-14.jsonl`) | 3:11 | 1:45 | 9 | yes | 3 / 3 | proposed, approved | 0 | hand played on the code before the 16:30 fixes; flip at 90.9 s; H6 (128x256 on 4 warps) spilled 1442 words at 0.10x; the GELU hunch arrived after the cap and never ran; best confirmed H3 at 2.65x vs naive and 0.97x vs eager |
 | runs/fallback2.jsonl (was fallback1) | 8:55 | 1:54 | 8 | no | 2 / 1 | no | 2 | presenter recording; Precision before FP16, two shared memory failures |
 | runs/fallback3.jsonl (was fallback2) | | | | | | | | not described in these notes |
 
 Recommendation: none of these shows every beat on the final code. Record one more session with the current build (after the 16:30 fixes) and the recording plan (Start recording, Speed directive, wait for the provisional card, Precision directive, the tile hunch "Try 128x128x32 tiles with 3 stages", answer the help requests, approve the hybrid), with the GPU healthy, and use it as `runs/demo.jsonl`. Until then the UI falls back from `demo.jsonl` to `fallback1.jsonl` (the 16:00 recording), `fallback2.jsonl` and on.
+
+## Recording 17:07 (code before the 16:30 fixes)
+
+- 152 s real, 94 s compressed, 8 hypotheses, 0 crashed runs, no spills (the most was 173 registers per thread). It passes the UI's log validation and folds to a finished session. The log shows the old code: the Speed bound line after the Precision directive, "not both under", `acc=fp16`, no `Summary.hypothesis`, no re-judge of H0, and the Precision branch opening 13.6 s after its directive.
+- H0 (64x64x32, 4 warps, 3 stages) confirmed at 2.72x +/- 0.07x vs naive and 1.02x vs eager, the best result of any recording so far, and nothing after it beat it: H2, H3, H5 and H6 were speed misses (0.95x to 1.00x), H4 (approximate GELU) and H7 (64x128x32) inconclusive at 1.03x.
+- Seeded FP16 (H1) provisional at 58.2 s, 1.41x +/- 0.02x over H0, standard 1.3e-2 and adversarial 7.1e-2; the Precision directive at 65.2 s flipped it within 2 ms, post-mortem with the K sweep at 78.9 s using the factual template (the prose model did not answer).
+- Papiers: the annotations show. hl_da32 and hl_dcdb carry the user's notes, the H1 post-mortem cites hl_dcdb (the VRR breakdown note) instead of hl_4784, and "tile size shared memory" now returns the Triton tutorial conversation. hl_ad37 (GELU) and hl_4d5d have no annotation yet.
+- No hybrid: each lens's fastest correct run was an approximate GELU variant (H5 on speed2, H4 on prec), the union is H5 itself and the other tile shape gives H4 itself, so every candidate was skipped without a log line.
+- The GELU hunch (d3) was not retested because H4 on prec had already run that exact config; the message said "already has gelu=approx or that exact config was run", which does not say which.
+- One help request (hq1 on prec), answered "keep tuning" after 26.7 s; prec ran both promised iterations (H6, H7). The cap of 8 ended the session.
 
 ## Recording fallback1 (16:00, hand played, code before the 16:30 fixes)
 

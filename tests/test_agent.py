@@ -1242,3 +1242,41 @@ def test_keep_tuning_guarantees_its_iterations_past_two_misses(tmp_path):
     assert o.hyps[-1].judgment.verdict == "rejected" and b.misses == 2
     assert b.status == "running" and o.promised("speed2") == 1
     assert of(o, "summary")[-1]["summary"]["next_step"] == "Try a different change on this branch."
+
+
+# ---- fixes from the 17:07 recording ----
+
+def converged_state(tmp_path):
+    """The 17:07 recording: H0 64x64x32 on main, approximate GELU as the best correct run of each lens (H1 on prec, H2 on speed2)."""
+    from agent.verdict import Judgment
+    from harness.kernel import Params
+    o = lens_state(tmp_path)
+    base = Params(64, 64, 32, 4, 3)
+    for x, p, lat in zip(o.hyps, (base, replace_gelu(base), Params(128, 128, 32, 8, 4, gelu="approx")), (0.720, 0.706, 0.732)):
+        x.params, x.metrics = p, met(lat, err=6.9e-4 if p.gelu == "approx" else 4.9e-4, adv=7.2e-4)
+    o.hyps[1].judgment = Judgment("inconclusive", False, "noise")
+    return o
+
+
+def replace_gelu(p):
+    from dataclasses import replace
+    return replace(p, gelu="approx")
+
+
+def test_a_hybrid_that_cannot_be_proposed_is_explained_once(tmp_path):
+    o = converged_state(tmp_path)
+    o.maybe_hybrid()
+    o.maybe_hybrid()
+    assert o.hybrid is None and not of(o, "hybrid_proposed")
+    logs = [e["text"] for e in of(o, "agent_log") if e["text"].startswith("No hybrid")]
+    assert len(logs) == 1 and "prec (H1) and speed2 (H2)" in logs[0] and "is H2's own configuration" in logs[0] and "is H1's own configuration" in logs[0]
+
+
+def test_a_retest_refusal_says_which_run_already_had_the_config(tmp_path):
+    o = converged_state(tmp_path)
+    hint = ("Try the tanh approximate GELU.", "Hunch from the Speed lens in directive d3", "d3", {"gelu": "approx"})
+    tried = {json.dumps(x.params.dict(), sort_keys=True) for x in o.hyps}
+    assert o.retest(o.branches["speed2"], o.hyps[0].params, hint, tried) is None
+    text = of(o, "plan_change")[-1]["text"]
+    assert text == ("\"Try the tanh approximate GELU.\" is not retested because that exact config, 64x64x32 tiles, 4 warps, 3 stages, FP32 accumulation, "
+                    "approx GELU, already ran as H1 on prec (inconclusive). The hunch was last tested in H2 (confirmed).")

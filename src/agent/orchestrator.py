@@ -253,6 +253,7 @@ class Orchestrator:
         self.promises: list[dict] = []  # extra iterations a plan_change promised: {ref, branch, n, start}
         self.conflicts = 0
         self.hybrid: dict | None = None  # {branches, params, base, text, t, state: proposed, approved, expired, done}
+        self.skipped = ""  # the last logged reason no hybrid could be proposed
         self.reserved: set[str] = set()  # slots past the cap: directive ids of hunches still to test, and "hybrid" once approved
         self.lock = threading.RLock()
         self.gpu = threading.Lock()
@@ -964,8 +965,11 @@ class Orchestrator:
                                                            f"accumulator elements on each thread, over the {ACC_LIMIT[p.acc]} register limit, so it is not retested.")
             return None
         if p == start or json.dumps(p.dict(), sort_keys=True) in tried_all:
-            self.log.emit("plan_change", help=hint[2], text=f"{b.id}'s current best already has {ruled_out(p, self.prior(e)[0])} or that exact config was run, "
-                                                           f"so \"{hint[0][:120]}\" is not retested. The earlier result is {e.id} ({e.judgment.verdict}).")
+            ran = next((x for x in self.hyps if x.params == p), None)
+            why = (f"that exact config, {params_text(p)}, already ran as {ran.id} on {ran.branch} ({ran.judgment.verdict})" if ran
+                   else f"{b.id}'s current best already has {ruled_out(p, self.prior(e)[0])}")
+            self.log.emit("plan_change", help=hint[2], text=f"\"{hint[0][:120]}\" is not retested because {why}."
+                                                           + (f" The hunch was last tested in {e.id} ({e.judgment.verdict})." if e is not ran else ""))
             return None
         bound = self.bounds(b.lens)
         claim = (f"Retest of {e.id}: {change(start, p)} on the current best {tiles_text(start)} is at least 1.02x faster than the same config without it, "
@@ -1039,6 +1043,11 @@ class Orchestrator:
                 break
             rejects.append(f"The full union, {params_text(p)}, {why}" if src is None else f"The tile shape of {src.branch} ({src.id}) gives {params_text(p)}, which {why}")
         else:
+            # logged once per distinct reason, since this runs after every iteration
+            text = f"No hybrid of {pb.branch} ({pb.id}) and {sb.branch} ({sb.id}) to propose: {'. '.join(rejects)}."
+            if text != self.skipped:
+                self.skipped = text
+                self.log.emit("agent_log", text=text)
             return
         keep = f" Keeping the tile shape of {src.branch} ({src.id}) instead." if src else ""
         text = (f"Combine {change(base, sb.params)} from {sb.branch} ({sb.id}) with {change(base, pb.params)} from {pb.branch} ({pb.id}). "

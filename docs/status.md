@@ -4,6 +4,7 @@ Read this first. Newest entries first in each list. Numbers, replay candidates a
 
 ## Next steps, in order
 
+0. Pull before recording: the 17:07 recording ran on the code from before the 16:30 fixes. Add it to `runs/` yourself (suggested as the new fallback1, ahead of 16:00, since its best result is 1.02x vs eager and it shows the annotations); it passes the UI's log validation (82 events, 152 s real, 94 s compressed). Analysis in docs/results.md.
 1. Rename the replays on the build machine (`runs/` is gitignored, so this is not in the repo): `mv runs/fallback2.jsonl runs/fallback3.jsonl && mv runs/fallback1.jsonl runs/fallback2.jsonl && cp <download>/war-room-2026-10-17-16-00-14.jsonl runs/fallback1.jsonl`. The 16:00 recording passes the UI's log validation and folds to a finished session (110 events, 191 s real, 105 s compressed).
 2. Re-record the demo on the 16:30 code, now that the highlights are annotated (added around 16:30): start the server, then `uv run python -m agent.drive` (or play the lenses by hand in `?mode=live` with Start recording, and send the tile hunch "Try 128x128x32 tiles with 3 stages" from the Speed tab soon after the Precision directive). The prompt changed, so the LLM cache misses on the first calls. Check `nvidia-smi` first. Watch it in `?mode=replay&file=/runs/sessions/<id>/replay.jsonl` and, if it holds up, copy it to `runs/demo.jsonl` (the judging build opens that first). `runs/demo.jsonl` does not exist yet.
 3. Check in that recording that the annotations show as "your note" on the Papiers reads, and whether the H1 post-mortem now cites hl_4d5d instead of hl_4784.
@@ -14,6 +15,8 @@ Read this first. Newest entries first in each list. Numbers, replay candidates a
 
 ## Things to check
 
+- Annotate hl_ad37 (GELU) and hl_4d5d (accumulation length) too; only hl_da32 and hl_dcdb were annotated in the 17:07 recording.
+
 - In the next recording: the hunch runs as its own hypothesis (cited "Hunch from the Speed lens"), no branch opens without a run, the Precision branch opens in the same millisecond as the directive, every logged run gets a Precision-bound verdict, and no hypothesis puts more than 128 FP32 accumulator elements on a thread.
 - The off-scale chart point and the register post-mortem fired for real in the 16:00 recording (H6, 7.373 ms, 0.10x); watch them in the UI from `fallback1`.
 - The stale help path (a flip that moves a pending request to the successor) fired for real in the 16:00 recording (hq1 moved from speed to speed2) and looked right in the log.
@@ -22,6 +25,7 @@ Read this first. Newest entries first in each list. Numbers, replay candidates a
 - gemini-3.8-flash quota ran out twice today (post-mortems then use the factual template), and OmniRoute refused every call: connect a working provider in its dashboard or set `OMNIROUTE=0` in `.env` to save about 6 s per session.
 
 ## Done
+- 17:45 Fixes from the 17:07 recording, with tests (91 pytest, 102 vitest, Ruff clean): when no hybrid can be proposed an agent_log line now says why, once per distinct reason (17:07 said nothing because both lenses' best runs were approximate GELU variants and every candidate was a parent's own config), and a retest refusal names the run that already had the config ("already ran as H4 on prec (inconclusive)") instead of "already has ... or that exact config was run". The 17:07 recording is analysed in docs/results.md.
 - 16:30 Fixes from the 16:00 recording (now `fallback1`), all with tests (89 pytest, 102 vitest, typecheck, oxlint and Ruff clean):
   - Register limit for every hypothesis: `hypothesis.parse` refuses a config over 128 FP32 (256 FP16) accumulator elements per thread with the arithmetic as the reason, the prompt states the rule, and a retest is checked too (H6 in the recording, 128x256 on 4 warps, spilled 1442 words at 0.10x). `ACC_LIMIT` moved to `harness/kernel.py`.
   - Reserved slots: a hunch and the approved hybrid each run in a slot the cap does not count (`Hyp.bonus`, `Orchestrator.reserved`), and once the cap is reached only branches holding a slot keep running. A constraint-only directive after the cap or Stop opens no branch (the recording opened an empty speed3).
