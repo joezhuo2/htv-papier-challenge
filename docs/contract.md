@@ -38,3 +38,11 @@
 18. `conflict_detected.reason` names the batches that failed, `verdict.reason` for a provisional result names only the errors over the strict bound, and claims and pivots use readable settings ("FP16 accumulation", "approx GELU") instead of `acc=fp16`.
 19. `run_finished.run.metrics` is `Metrics | FailedMetrics`: a run that failed to compile, crashed or timed out sends null for latency, throughput, both errors and VRAM, and the type now says so (it was typed as numbers).
 20. `Summary` gains optional `hypothesis`, the hypothesis it is about. The UI used to tie a summary to the newest finished run on its branch, which put H1's post-flip summary on H2 in the 16:00 recording; logs without the field still use that fallback.
+
+## Changes made after 17:45
+
+21. New event `final_report { report: FinalReport }`, sent just before `session_finished`: `best` (run, hypothesis, branch, params, latency and speedups, or null), `ruled_out`, `next`, `human` (decisions that need a lens owner) and `hunches` (one `{ directive, lens, text, outcome }` per typed hunch). Logs without it stay valid and the result screen renders without it.
+22. Every rejected verdict now has a `post_mortem`, speed misses included (empty sweep, cause from registers, spills and the parameter diff). `post_mortem.note` is the retrieved item that best matches the cause, not the first search hit.
+23. A hunch directive gets exactly one `plan_change`, when it arrives, saying whether it is a retest; later notices about it are `agent_log` lines. A help request still open when the session ends gets one `plan_change` "Session ended with hqN unanswered: <why>".
+24. `help_requested` is reissued at most once per re-judge and only when it changed. A request for a branch rejected while its run was measured is filed against the successor (`blocks` names it), and a rejected branch never gets another `branch_status`.
+25. `papiers_context.note.annotation` has LaTeX dollar delimiters removed.
