@@ -38,7 +38,7 @@ describe('recording fixes', () => {
     render(<RunDetail view={view} onClose={() => {}} />)
     const note = screen.getByTestId('hypothesis-note')
     expect(note.textContent).not.toContain('cnv_6630997c')
-    expect(within(note).getByTestId('note-chip').textContent).toContain('Papiers note')
+    expect(within(note).getByTestId('note-chip').textContent).toContain('Conversation')
   })
 })
 

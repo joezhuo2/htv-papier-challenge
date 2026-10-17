@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { HypothesisView, NoteView, View } from '../state/reducer'
-import { cleanNote, clock, kindName, papiersNote } from '../state/derive'
+import { chipLabel, cleanNote, clock, kindName, noteKind, papiersNote, untex } from '../state/derive'
 import { MockTag } from './Glyph'
 
 interface Item { id: string; kind: string; title: string; excerpt: string }
@@ -22,9 +22,11 @@ const NOTE_ID = /\b((?:cnv|hl|nte|psg|pas)_[0-9a-zA-Z]{4,})\b/
 
 export function NoteChip({ view, id }: { view: View; id: string }) {
   const found = view.notes.find(n => n.id === id)
+  const kind = noteKind(id, found?.kind)
+  // highlights, notes and conversations look different, so the user's own marks stand out from retrieved context
   return (
-    <button type="button" className="tag note-chip" onClick={() => showNote(id)} title={id} data-testid="note-chip">
-      Papiers {found?.kind && found.kind !== 'note' ? found.kind : 'note'}{found ? `: ${found.document_title || cleanNote(found).title}` : ''}
+    <button type="button" className={`tag note-chip chip-${kind}`} onClick={() => showNote(id)} title={id} data-testid="note-chip" data-kind={kind}>
+      {chipLabel(kind)}{found ? `: ${found.document_title || cleanNote(found).title}` : ''}
     </button>
   )
 }
@@ -36,7 +38,7 @@ export function NoteBody({ note }: { note: NoteView }) {
     <div className="stack note-body" style={{ gap: 2 }} data-testid="note-body">
       <span className="small"><span className="tag">{kindName(note.kind)}</span> <span className="strong">{note.document_title || cleanNote(note).title}</span></span>
       {text ? <blockquote className="small clamp" style={{ margin: 0 }}>{text}</blockquote> : null}
-      {note.annotation ? <p className="small" data-testid="your-note"><span className="muted">your note:</span> {note.annotation}</p> : null}
+      {note.annotation ? <p className="small" data-testid="your-note"><span className="muted">your note:</span> {untex(note.annotation)}</p> : null}
     </div>
   )
 }
@@ -66,7 +68,7 @@ export function InformedBy({ view, h }: { view: View; h: HypothesisView }) {
     <button className="informed" onClick={() => showNote(id)} data-testid="informed-by" title={note?.excerpt}>
       <span className="strong">Informed by {found?.kind ? kindName(found.kind) : 'Papiers note'}</span>
       {found ? <span className="oneline muted">{found.document_title || note!.title}</span> : null}
-      {found?.annotation ? <span className="oneline small">your note: {found.annotation}</span> : null}
+      {found?.annotation ? <span className="oneline small">your note: {untex(found.annotation)}</span> : null}
     </button>
   )
 }

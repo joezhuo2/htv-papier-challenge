@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import type { DemoEvent } from '@contract/types'
 import { demoScript } from '@contract/demo-script'
-import { PapiersPanel } from '../src/components/PapiersPanel'
+import { NoteChip, PapiersPanel } from '../src/components/PapiersPanel'
 import { SummaryFeed } from '../src/components/SummaryFeed'
 import { fold } from '../src/state/reducer'
 
@@ -57,7 +57,7 @@ describe('Papiers reads in the event log', () => {
     render(<SummaryFeed view={v} onSelectRun={() => {}} onPostMortem={() => {}} onReport={() => {}} onSend={() => {}} onHybrid={() => {}} />)
     const feed = screen.getByLabelText('summary feed')
     expect(feed.textContent).not.toContain(id)
-    expect(within(feed).getAllByTestId('note-chip')[0].textContent).toBe('Papiers note: Triton tutorial on tiling')
+    expect(within(feed).getAllByTestId('note-chip')[0].textContent).toBe('Conversation: Triton tutorial on tiling')
   })
 
   it('shows no matching notes for an empty search, in the panel and the feed', () => {
@@ -112,6 +112,22 @@ describe('Papiers highlights', () => {
     expect(body.textContent).toContain('MIXED PRECISION TRAINING')
     expect(body.textContent).toContain('FP16 dot products accumulate into FP32.')
     expect(within(body).getByTestId('your-note').textContent).toBe('your note: This is why our FP16 accumulator fails.')
+  })
+
+  it('drops LaTeX dollars from an annotation and shows highlights, notes and conversations as distinct chips', () => {
+    const note = { id: 'nte_1', title: 'Tiling plan', excerpt: 'Keep 128 per thread.', kind: 'note' as const }
+    const view = fold([
+      { t, type: 'papiers_context', query: 'q', note: { ...hl, annotation: 'Breaks at $K = 4096$, about $$\\sqrt{K}$$.' } },
+      { t, type: 'papiers_context', query: 'q', note },
+    ])
+    render(<PapiersPanel view={view} />)
+    expect(screen.getAllByTestId('your-note')[0].textContent).toBe('your note: Breaks at K = 4096, about \\sqrt{K}.')
+    render(<>{['hl_da32a6e4a587', 'nte_1', 'cnv_9'].map(id => <NoteChip key={id} view={view} id={id} />)}</>)
+    const chips = screen.getAllByTestId('note-chip')
+    expect(chips.map(c => [c.dataset.kind, c.textContent])).toEqual([
+      ['highlight', 'Your highlight: MIXED PRECISION TRAINING'], ['note', 'Your note: Tiling plan'], ['conversation', 'Conversation'],
+    ])
+    expect(new Set(chips.map(c => c.className)).size).toBe(3)
   })
 
   it('keeps an old-shape note without kind valid', () => {

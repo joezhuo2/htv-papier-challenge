@@ -14,6 +14,7 @@ from pathlib import Path
 
 # lower ranks first: an annotated highlight carries the user's own words, a note is theirs entirely
 RANK = {"annotated highlight": 0, "note": 1, "highlight": 2, "passage": 3, "conversation": 4}
+TEX = re.compile(r"\$\$?(.+?)\$\$?", re.DOTALL)
 STOP = {"a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "the", "to", "with"}
 
 
@@ -64,8 +65,14 @@ def words(text):
     return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in STOP and len(w) > 2}
 
 
+def untex(text):
+    """Drops LaTeX math delimiters ($x$, $$x$$) and keeps their content, annotations are shown as plain text."""
+    return TEX.sub(r"\1", text).strip() if text else text
+
+
 def item(id, kind, title, text, annotation=None):
     kind = "highlight" if kind == "annotated highlight" else kind
+    annotation = untex(annotation)
     d = {"id": id, "kind": kind, "document_title": title, "title": title or id, "excerpt": text}
     if kind == "highlight":
         d["highlight_text"] = text
@@ -97,22 +104,15 @@ class Library:
         with ThreadPoolExecutor(2) as pool:
             pages = list(pool.map(self.run, [["search", query, "--kind", k, "--limit", "5"] for k in ("highlight", "note")]))
         found = [(h, k) for page, k in zip(pages, ("highlight", "note")) for h in hits(page, k)]
-        if not found:
-            # the search index can miss a mark the user made, so match the listed highlights and notes on shared words
-            q = words(query)
-            found = [((i, t, p), k) for i, k, t, p in self.listed() if len(q & words(p)) >= 2]
+        q = words(query)
+        # the search index can miss a mark the user made, so listed highlights and notes sharing words with the query are candidates too
+        listed = [((i, t, p), k) for i, k, t, p in self.listed() if len(q & words(p)) >= 2]
+        found = found or listed
         if found:
-            seen, marks = set(), []
-            for (i, t, p), k in found:
-                if i not in seen:
-                    seen.add(i)
-                    marks.append((i, k, t, p))
-            full = self.annotate([i for i, k, _, _ in marks if k == "highlight"][:limit * 2])
-            ranked = []
-            for i, k, t, p in marks:
-                text, note = full.get(i, (p, None))
-                ranked.append(("annotated highlight" if note else k, i, t, text or p, note))
-            ranked.sort(key=lambda x: RANK[x[0]])
+            ranked = self.rank(found)
+            if not any(x[4] for x in ranked) and listed:
+                # no annotated highlight among the hits: an annotated listed one that matches the query is preferred
+                ranked = self.rank(found + listed)
             return [item(i, k, t, text, note) for k, i, t, text, note in ranked[:limit]]
         for args, kind in ((["--kind", "passage", "--filter", "annotated.eq=true"], "passage"), (["--kind", "passage"], "passage"),
                            (["--kind", "conversation"], "conversation")):
@@ -120,6 +120,20 @@ class Library:
             if got:
                 return [item(i, kind, t, p) for i, t, p in got[:limit]]
         return []
+
+    def rank(self, found):
+        """[(kind, id, title, text, annotation)], annotated highlights first, then notes, then plain highlights, in search order within each."""
+        seen, marks = set(), []
+        for (i, t, p), k in found:
+            if i not in seen:
+                seen.add(i)
+                marks.append((i, k, t, p))
+        full = self.annotate([i for i, k, _, _ in marks if k == "highlight"][:10])
+        ranked = []
+        for i, k, t, p in marks:
+            text, note = full.get(i, (p, None))
+            ranked.append(("annotated highlight" if note else k, i, t, text or p, note))
+        return sorted(ranked, key=lambda x: RANK[x[0]])
 
     def counts(self):
         """Highlights, notes and documents the CLI can see, '50+' when a page is full."""

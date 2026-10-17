@@ -116,6 +116,9 @@ p { margin: 0; }
   white-space: nowrap;
 }
 .tag.mock { border-style: dashed; color: var(--ink); }
+.note-chip.chip-highlight { background: color-mix(in srgb, var(--inconclusive) 16%, var(--surface)); border-color: var(--inconclusive); color: var(--ink); }
+.note-chip.chip-note { border-color: var(--confirmed); color: var(--confirmed); }
+.note-chip.chip-conversation { border-style: dashed; border-color: var(--speed); color: var(--speed); }
 
 .banner {
   display: flex;

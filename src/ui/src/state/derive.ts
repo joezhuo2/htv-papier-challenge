@@ -63,6 +63,16 @@ export const papiersNote = (h?: Hypothesis) => h?.note?.match(/papiers (?:note|h
 // how a retrieved item is named: the user's own marks are "your highlight" and "your note"
 export const kindName = (kind?: string) => kind === 'highlight' ? 'your highlight' : kind === 'note' ? 'your note' : kind ?? 'note'
 
+// LaTeX math delimiters in annotations ($K$, $$x$$) are dropped, older logs still carry them
+export const untex = (text: string) => text.replace(/\$\$?([^$]+?)\$\$?/g, '$1')
+
+// the kind of a Papiers item from its record or, when it was not read this session, its id prefix
+export const noteKind = (id: string, kind?: string) =>
+  kind ?? (id.startsWith('hl_') ? 'highlight' : id.startsWith('nte_') ? 'note' : id.startsWith('cnv_') ? 'conversation' : 'passage')
+
+export const chipLabel = (kind: string) =>
+  ({ highlight: 'Your highlight', note: 'Your note', conversation: 'Conversation', passage: 'Passage' })[kind] ?? 'Papiers note'
+
 export const hypothesisOf = (v: View, id?: string) => v.hypotheses.find(h => h.id === id)
 export const runOf = (v: View, id?: string) => v.runs.find(r => r.id === id)
 export const latestRun = (v: View, branch: string) => [...v.runs].reverse().find(r => r.branch === branch)

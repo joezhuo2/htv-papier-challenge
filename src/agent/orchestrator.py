@@ -16,6 +16,7 @@ from dataclasses import dataclass, field, replace
 from agent import export as ex
 from agent import hypothesis as hyp
 from agent.events import Log
+from agent.papiers import words
 from agent.verdict import Judgment, judge, sci
 from harness.data import BOUND
 from harness.kernel import (
@@ -1435,11 +1436,19 @@ class Orchestrator:
                                                                f"Verdict reason: {h.judgment.reason}\nError vs K sweep on adversarial magnitudes: {json.dumps(sweep)}{context}"}],
                                   self.strong, f"pm-{h.id}", ("cause", "pivot")) or fallback
             pm = {"hypothesis": h.id, "expected": expected, "observed": observed, "cause": prose["cause"], "pivot": prose["pivot"], "sweep": sweep}
-        if found:
-            pm["note"] = found[0]["id"]
+        note = self.best_note(found + self.papiers(facet(self.baseline(h)[0], h.params)), f"{pm['cause']} {pm['pivot']}")
+        if note:
+            pm["note"] = note["id"]
         self.avoid.append(f"{ruled_out(h.params, base)} ({h.id} rejected: {h.judgment.reason})")
         self.pms[h.id] = pm
         self.log.emit("post_mortem", post_mortem=pm)
+
+    @staticmethod
+    def best_note(items, text):
+        """The retrieved item whose own words overlap the post-mortem's cause and pivot most, an annotated highlight first on a tie."""
+        w = words(text)
+        return max(items, default=None, key=lambda n: (len(w & words(" ".join(filter(None, (n.get("highlight_text"), n.get("annotation"), n["excerpt"]))))),
+                                                       bool(n.get("annotation")), n.get("kind") == "highlight"))
 
     def summarize(self, h: Hyp, b: Branch, next_step: str):
         """Every field is computed from the verdict, its checks and the run's measured spread, so it cannot contradict them."""

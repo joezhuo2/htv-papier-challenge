@@ -1482,3 +1482,29 @@ def test_the_final_report_comes_before_session_finished_with_one_line_per_hunch(
                              "outcome": "H2 on speed ran 128x128x32 tiles, 4 warps, 3 stages, FP32 accumulation, approx GELU: " + o.outcome(o.hyps[2])}]
     assert r["next"]
     assert_contract(o.log.events)
+
+
+def test_annotations_lose_latex_dollars_and_an_annotated_highlight_wins_wherever_it_ranks():
+    from agent.papiers import Library, untex
+    assert untex("Error grows with $K$, roughly $$\\sqrt{K}$$ here.") == "Error grows with K, roughly \\sqrt{K} here."
+    search = {"results": [{"kind": "document", "id": "doc", "title": "Paper", "evidence": [
+        {"kind": "highlight", "id": f"hl_{i}", "snippet": f"accumulation precision {i}"} for i in range(5)]}]}
+    read = {"items": [{"id": f"hl_{i}", "ok": True, "content": f"text {i}", "metadata": {"annotationText": "Breaks at $K = 4096$." if i == 4 else None}}
+                      for i in range(5)]}
+    got = Library(CLI({("search", "highlight", None): search, ("read", None, None): read})).retrieve("accumulation precision FP16")
+    assert got[0]["id"] == "hl_4" and got[0]["annotation"] == "Breaks at K = 4096."
+    listed = {"items": [{"id": "hl_l", "kind": "highlight", "preview": "accumulation precision in FP16 breaks", "metadata": {"documentTitle": "Paper"}}]}
+    read2 = {"items": [{"id": "hl_l", "ok": True, "content": "listed", "metadata": {"annotationText": "mine"}}]}
+    one = {"results": [{"kind": "document", "id": "doc", "title": "Paper", "evidence": [{"kind": "highlight", "id": "hl_0", "snippet": "plain"}]}]}
+    got = Library(CLI({("search", "highlight", None): one, ("list", "highlight", None): listed, ("read", None, None): read2})).retrieve("accumulation precision FP16")
+    assert [x["id"] for x in got] == ["hl_l", "hl_0"]
+
+
+def test_a_post_mortem_cites_the_retrieved_item_that_best_matches_its_cause():
+    from agent.orchestrator import Orchestrator
+    items = [{"id": "cnv_1", "kind": "conversation", "excerpt": "Triton tiles and shared memory."},
+             {"id": "hl_a", "kind": "highlight", "excerpt": "x", "highlight_text": "Register pressure makes the kernel spill to local memory.", "annotation": "spills"},
+             {"id": "hl_b", "kind": "highlight", "excerpt": "y", "highlight_text": "Accumulation error grows with the length K."}]
+    assert Orchestrator.best_note(items, "It spills 40 words per thread to local memory.")["id"] == "hl_a"
+    assert Orchestrator.best_note(items, "Adversarial error grows with K: accumulation length.")["id"] == "hl_b"
+    assert Orchestrator.best_note([], "anything") is None
