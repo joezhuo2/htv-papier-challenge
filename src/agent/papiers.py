@@ -14,7 +14,7 @@ from pathlib import Path
 
 # lower ranks first: an annotated highlight carries the user's own words, a note is theirs entirely
 RANK = {"annotated highlight": 0, "note": 1, "highlight": 2, "passage": 3, "conversation": 4}
-TEX = re.compile(r"\$\$?(.+?)\$\$?", re.DOTALL)
+TEX = re.compile(r"\$\$?(.+?)\$\$?|\\\((.+?)\\\)|\\\[(.+?)\\\]", re.DOTALL)
 STOP = {"a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "the", "to", "with"}
 
 
@@ -66,13 +66,13 @@ def words(text):
 
 
 def untex(text):
-    """Drops LaTeX math delimiters ($x$, $$x$$) and keeps their content, annotations are shown as plain text."""
-    return TEX.sub(r"\1", text).strip() if text else text
+    """Drops LaTeX math delimiters ($x$, $$x$$, \\(x\\), \\[x\\]) and keeps their content, marks are shown as plain text."""
+    return TEX.sub(lambda m: next(g for g in m.groups() if g is not None), text).strip() if text else text
 
 
 def item(id, kind, title, text, annotation=None):
     kind = "highlight" if kind == "annotated highlight" else kind
-    annotation = untex(annotation)
+    annotation, text = untex(annotation), untex(text)
     d = {"id": id, "kind": kind, "document_title": title, "title": title or id, "excerpt": text}
     if kind == "highlight":
         d["highlight_text"] = text

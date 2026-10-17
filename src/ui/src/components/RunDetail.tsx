@@ -25,7 +25,7 @@ export function RunDetail({ view, onClose }: { view: View; onClose: () => void }
         <>
           <p><span className="mono">{h.id}</span> {h.claim}</p>
           <InformedBy view={view} h={h} />
-          {h.note && !/^Context from Papiers note \S+$/.test(h.note) ? <p className="small muted" data-testid="hypothesis-note"><NoteText view={view} text={h.note} /></p> : null}
+          {h.note && !/^Context from (Papiers note \S+|your \w+ in "[^"]*"|the Papiers \w+ "[^"]*")$/.test(h.note) ? <p className="small muted" data-testid="hypothesis-note"><NoteText view={view} text={h.note} /></p> : null}
           <dl>
             <dt>Predicted</dt><dd>{predictionText(view, h)}</dd>
             {run?.params ? <><dt>Params</dt><dd className="mono">{paramText(run.params)}</dd></> : null}

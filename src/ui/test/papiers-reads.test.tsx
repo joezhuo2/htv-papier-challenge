@@ -130,6 +130,13 @@ describe('Papiers highlights', () => {
     expect(new Set(chips.map(c => c.className)).size).toBe(3)
   })
 
+  it('links a hypothesis to its Papiers item by the papiers field, so the note needs no raw id', async () => {
+    const { papiersNote, untex } = await import('../src/state/derive')
+    expect(papiersNote({ id: 'H1', branch: 'main', claim: 'c', prediction: demoScript[3].type === 'hypothesis_proposed' ? demoScript[3].hypothesis.prediction : ({} as never),
+      params: hl as never, note: 'Context from the Papiers conversation "Triton tutorial"', papiers: 'cnv_6630997c' })).toBe('cnv_6630997c')
+    expect(untex('like \\(\\sqrt{K}\\) or $K$')).toBe('like \\sqrt{K} or K')
+  })
+
   it('keeps an old-shape note without kind valid', () => {
     const view = fold([{ t, type: 'papiers_context', query: 'q', note: { id: 'cnv_6630997c', title: 'Triton tutorial', excerpt: 'Tiles.' } }])
     render(<PapiersPanel view={view} />)

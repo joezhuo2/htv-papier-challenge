@@ -33,7 +33,7 @@ export function NoteChip({ view, id }: { view: View; id: string }) {
 
 // a retrieved item: the document title, the highlighted text, and the user's annotation labelled as their own words
 export function NoteBody({ note }: { note: NoteView }) {
-  const text = note.highlight_text ?? cleanNote(note).excerpt
+  const text = untex(note.highlight_text ?? cleanNote(note).excerpt)
   return (
     <div className="stack note-body" style={{ gap: 2 }} data-testid="note-body">
       <span className="small"><span className="tag">{kindName(note.kind)}</span> <span className="strong">{note.document_title || cleanNote(note).title}</span></span>

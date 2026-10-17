@@ -78,10 +78,11 @@ class Hyp:
     base: Params | None = None  # the config a harness variant is compared against, when it is not the branch best
     ref: str = "naive"  # which same-window reference the speedup was taken against
     bonus: bool = False  # ran in a reserved slot (a presenter hunch or the approved hybrid), not counted against the cap
+    papiers: str | None = None  # the id of the Papiers item cited in the note
 
     def dict(self):
         d = {"id": self.id, "branch": self.branch, "claim": self.claim, "prediction": self.prediction, "params": self.params.dict()}
-        return d | ({"note": self.note} if self.note else {})
+        return d | ({"note": self.note} if self.note else {}) | ({"papiers": self.papiers} if self.papiers else {})
 
 
 @dataclass
@@ -120,7 +121,11 @@ def facet(a: Params, b: Params):
 
 
 def cite_text(n):
-    return f"Context from Papiers {n.get('kind') or 'note'} {n['id']}"
+    """Names the cited item by its document, the id goes in Hyp.papiers instead of the prose."""
+    title = (n.get("document_title") or n["title"]).strip()
+    kind = n.get("kind") or {"hl": "highlight", "nte": "note", "cnv": "conversation"}.get(n["id"].split("_")[0], "passage")
+    return (f"Context from your {kind} in \"{title}\"" if kind in ("highlight", "note")
+            else f"Context from the Papiers {kind} \"{title}\"")
 
 
 def claim_text(start: Params, p: Params, pred, bound):
@@ -1321,6 +1326,7 @@ class Orchestrator:
         found = self.papiers(facet(h.base or start, h.params))
         if found:
             h.note = f"{h.note.rstrip('.')}. {cite_text(found[0])}" if h.note else cite_text(found[0])
+            h.papiers = found[0]["id"]
 
     def ask_or_wait(self, messages, tag, branch):
         """Calls the fast model. On a timeout or API error the session shows it and waits for a retry command, or retries by
@@ -1454,10 +1460,12 @@ class Orchestrator:
 
     @staticmethod
     def best_note(items, text):
-        """The retrieved item whose own words overlap the post-mortem's cause and pivot most, an annotated highlight first on a tie."""
+        """What a post-mortem cites: an annotated highlight whenever one was retrieved, the one whose words overlap the cause and pivot
+        most, then the highest ranked in retrieval order. Without one, the item with the most overlap, a highlight first on a tie."""
         w = words(text)
-        return max(items, default=None, key=lambda n: (len(w & words(" ".join(filter(None, (n.get("highlight_text"), n.get("annotation"), n["excerpt"]))))),
-                                                       bool(n.get("annotation")), n.get("kind") == "highlight"))
+        score = lambda n: len(w & words(" ".join(filter(None, (n.get("highlight_text"), n.get("annotation"), n["excerpt"])))))
+        ranked = [(n.get("kind") == "highlight" and bool(n.get("annotation")), score(n), n.get("kind") == "highlight", -i, n) for i, n in enumerate(items)]
+        return max(ranked, default=(None,) * 5, key=lambda x: x[:4])[4]
 
     def summarize(self, h: Hyp, b: Branch, next_step: str):
         """Every field is computed from the verdict, its checks and the run's measured spread, so it cannot contradict them."""

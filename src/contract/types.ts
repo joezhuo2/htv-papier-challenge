@@ -69,6 +69,7 @@ export interface Hypothesis {
   prediction: Prediction
   params: Params
   note?: string
+  papiers?: string // the id of the Papiers item the note cites by its document title, absent in older logs that put the id in the note
 }
 
 export interface Run {

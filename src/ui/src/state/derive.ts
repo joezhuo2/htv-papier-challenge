@@ -58,13 +58,13 @@ export const predictionText = (v: View, h: HypothesisView) => {
   return `at least ${times(h.prediction.min_speedup)} vs ${vs}${at}, error ${boundText(h.prediction.bound)}`
 }
 
-export const papiersNote = (h?: Hypothesis) => h?.note?.match(/papiers (?:note|highlight|passage|conversation) ((?:cnv|hl|nte|psg|pas)_[0-9a-zA-Z]+)/i)?.[1]
+export const papiersNote = (h?: Hypothesis) => h?.papiers ?? h?.note?.match(/papiers (?:note|highlight|passage|conversation) ((?:cnv|hl|nte|psg|pas)_[0-9a-zA-Z]+)/i)?.[1]
 
 // how a retrieved item is named: the user's own marks are "your highlight" and "your note"
 export const kindName = (kind?: string) => kind === 'highlight' ? 'your highlight' : kind === 'note' ? 'your note' : kind ?? 'note'
 
 // LaTeX math delimiters in annotations ($K$, $$x$$) are dropped, older logs still carry them
-export const untex = (text: string) => text.replace(/\$\$?([^$]+?)\$\$?/g, '$1')
+export const untex = (text: string) => text.replace(/\$\$?([^$]+?)\$\$?|\\\((.+?)\\\)|\\\[(.+?)\\\]/g, (_, a, b, c) => a ?? b ?? c)
 
 // the kind of a Papiers item from its record or, when it was not read this session, its id prefix
 export const noteKind = (id: string, kind?: string) =>

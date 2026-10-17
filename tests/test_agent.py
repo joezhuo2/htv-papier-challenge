@@ -457,7 +457,8 @@ def test_papiers_context_is_read_once_cited_and_prompted(tmp_path):
     notes = of(o, "papiers_context")
     assert notes == [{**notes[0], "query": QUERIES["both"], "note": {"id": "cnv_1", "title": "Triton tutorial", "excerpt": "Accumulate in FP32 for accuracy."}}]
     assert len(queries) == 1
-    assert of(o, "hypothesis_proposed")[0]["hypothesis"]["note"] == "Context from Papiers note cnv_1"  # old-shape items have no kind
+    hy = of(o, "hypothesis_proposed")[0]["hypothesis"]
+    assert hy["note"] == "Context from the Papiers conversation \"Triton tutorial\"" and hy["papiers"] == "cnv_1"  # old-shape items have no kind
     assert "Papiers cnv_1 (Triton tutorial): Accumulate in FP32 for accuracy." in o.ask.calls[0][2][1]["content"]
     assert_contract_papiers(o.log.events)
 
@@ -866,7 +867,7 @@ def test_recording_waits_after_h0_then_continues_on_main_as_a_flagged_default(tm
     assert o.log.events.index(next(e for e in o.log.events if e["type"] == "verdict")) < waited
     assert any("proceeding on the default assumption" in t for t in logs)
     assert "flagged: default continuation" not in hyps[0].get("note", "")
-    assert all(x["note"].endswith("(flagged: default continuation, no lens directive arrived)") and "Papiers note cnv_1 " in x["note"] for x in hyps[1:])
+    assert all(x["note"].endswith("(flagged: default continuation, no lens directive arrived)") and "Papiers conversation \"t\" " in x["note"] for x in hyps[1:])
 
 
 def test_recording_runs_the_speed_branch_after_a_directive_and_never_finishes_on_idle(tmp_path):
@@ -1168,7 +1169,7 @@ def test_the_fp16_hypothesis_and_its_post_mortem_cite_what_was_retrieved(tmp_pat
     o = make(tmp_path, Asker(h(P, 2.0, "naive"), default="no json"), main_iters=1, branch_iters=1, context=Library(cli).retrieve)
     run_with(o, [(1, "speed", "Push throughput harder."), (2, "precision", "Max error under 1e-3 on both batches.")])
     seed = of(o, "hypothesis_proposed")[1]["hypothesis"]
-    assert seed["params"]["acc"] == "fp16" and seed["note"].endswith("Context from Papiers highlight hl_mp1")
+    assert seed["params"]["acc"] == "fp16" and seed["note"].endswith("Context from your highlight in \"MIXED PRECISION TRAINING\"") and seed["papiers"] == "hl_mp1"
     reads = [e for e in of(o, "papiers_context") if e.get("note")]
     assert {e["query"] for e in reads} >= {"accumulation precision FP16", "accumulation error grows with length"}
     assert reads[0]["note"]["annotation"] == "This is why our FP16 accumulator fails at large K."
@@ -1515,7 +1516,8 @@ def test_a_post_mortem_cites_the_retrieved_item_that_best_matches_its_cause():
              {"id": "hl_a", "kind": "highlight", "excerpt": "x", "highlight_text": "Register pressure makes the kernel spill to local memory.", "annotation": "spills"},
              {"id": "hl_b", "kind": "highlight", "excerpt": "y", "highlight_text": "Accumulation error grows with the length K."}]
     assert Orchestrator.best_note(items, "It spills 40 words per thread to local memory.")["id"] == "hl_a"
-    assert Orchestrator.best_note(items, "Adversarial error grows with K: accumulation length.")["id"] == "hl_b"
+    assert Orchestrator.best_note(items, "Adversarial error grows with K: accumulation length.")["id"] == "hl_a"  # the annotated highlight wins
+    assert Orchestrator.best_note(items[::2], "Adversarial error grows with K: accumulation length.")["id"] == "hl_b"
     assert Orchestrator.best_note([], "anything") is None
 
 
@@ -1563,3 +1565,17 @@ def test_a_pivot_claim_states_every_change_from_the_pivot_config(tmp_path):
                            "it changes warps 4 to 8, stages 3 to 4.")
     prompt = next(m for _, tag, m in o.ask.calls if tag.startswith("speed2-"))[1]["content"]
     assert "This branch pivots to 128x128x32 tiles, 4 warps, 3 stages, FP32 accumulation, exact GELU." in prompt
+
+
+def test_notes_name_the_document_and_post_mortems_prefer_an_annotated_highlight():
+    from agent.orchestrator import Orchestrator, cite_text
+    from agent.papiers import untex
+    assert untex("grows like \\(\\sqrt{K}\\) and \\[e = K\\epsilon\\], or $K$") == "grows like \\sqrt{K} and e = K\\epsilon, or K"
+    assert cite_text({"id": "cnv_6630997c", "title": "Triton tutorial", "excerpt": ""}) == "Context from the Papiers conversation \"Triton tutorial\""
+    items = [{"id": "hl_plain", "kind": "highlight", "excerpt": "", "highlight_text": "Register pressure spills to local memory."},
+             {"id": "cnv_1", "kind": "conversation", "excerpt": "register pressure spills local memory threads"},
+             {"id": "hl_low", "kind": "highlight", "excerpt": "", "highlight_text": "Tiles.", "annotation": "mine"},
+             {"id": "hl_note", "kind": "highlight", "excerpt": "", "highlight_text": "Spills hurt.", "annotation": "Our 256x256 spilled."}]
+    assert Orchestrator.best_note(items, "It spills to local memory.")["id"] == "hl_note"
+    assert Orchestrator.best_note(items[:2], "It spills to local memory.")["id"] == "hl_plain"
+    assert Orchestrator.best_note(items[2:3] + items[3:], "unrelated")["id"] == "hl_low"  # no overlap: the higher ranked annotated one
