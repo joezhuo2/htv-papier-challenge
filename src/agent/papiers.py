@@ -1,7 +1,8 @@
 """Read-only Papiers context through the papiers CLI (Node 22). The CLI cannot write, findings are exported as files instead.
 
 retrieve() follows the papiers-research skill shipped in the npm package: the user's own judgement (highlights, annotations,
-notes) outranks everything else, then passages in annotated documents, then any passage, then conversations."""
+notes) outranks everything else, then passages in annotated documents, then any passage, then conversations. Tile, stage, warp and shared
+memory queries go from highlights and notes straight to conversations."""
 
 import glob
 import json
@@ -15,6 +16,7 @@ from pathlib import Path
 # lower ranks first: an annotated highlight carries the user's own words, a note is theirs entirely
 RANK = {"annotated highlight": 0, "note": 1, "highlight": 2, "passage": 3, "conversation": 4}
 TEX = re.compile(r"\$\$?(.+?)\$\$?|\\\((.+?)\\\)|\\\[(.+?)\\\]", re.DOTALL)
+TILING = {"tile", "tiles", "stage", "stages", "warp", "warps", "shared", "memory"}
 STOP = {"a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "the", "to", "with"}
 
 
@@ -115,8 +117,11 @@ class Library:
             pages = list(pool.map(self.run, [["search", query, "--kind", k, "--limit", "5"] for k in ("highlight", "note")]))
         found = [(h, k) for page, k in zip(pages, ("highlight", "note")) for h in hits(page, k)]
         q = words(query)
+        # tiling queries rarely share two words with a mark and passages about tiling are generic, so any listed mark that mentions tiles,
+        # stages, warps or shared memory is a candidate and the only fallback is a conversation
+        tiled = bool(q & TILING)
         # the search index can miss a mark the user made, so listed highlights and notes sharing words with the query are candidates too
-        listed = [((i, t, p), k) for i, k, t, p in self.listed() if len(q & words(p)) >= 2]
+        listed = [((i, t, p), k) for i, k, t, p in self.listed() if (words(p) & TILING if tiled else len(q & words(p)) >= 2)]
         found = found or listed
         if found:
             ranked = self.rank(found)
@@ -124,8 +129,8 @@ class Library:
                 # no annotated highlight among the hits: an annotated listed one that matches the query is preferred
                 ranked = self.rank(found + listed)
             return [item(i, k, t, text, note) for k, i, t, text, note in ranked[:limit]]
-        for args, kind in ((["--kind", "passage", "--filter", "annotated.eq=true"], "passage"), (["--kind", "passage"], "passage"),
-                           (["--kind", "conversation"], "conversation")):
+        passages = [] if tiled else [(["--kind", "passage", "--filter", "annotated.eq=true"], "passage"), (["--kind", "passage"], "passage")]
+        for args, kind in [*passages, (["--kind", "conversation"], "conversation")]:
             got = hits(self.run(["search", query, *args, "--limit", str(limit)]), kind)
             if got:
                 return [item(i, kind, (self.document(p) or t) if kind == "conversation" else t, p) for i, t, p in got[:limit]]

@@ -1142,11 +1142,11 @@ def test_retrieval_falls_back_to_listed_marks_then_annotated_passages_then_passa
     listed = {"items": [{"id": "hl_x", "kind": "highlight", "preview": "accumulation length breakdown region", "metadata": {"documentTitle": "Bit-width"}}]}
     cli = CLI({("list", "highlight", None): listed, ("read", None, None): {"items": []}})
     assert [x["id"] for x in Library(cli).retrieve("accumulation error grows with length")] == ["hl_x"]
-    passage = {"results": [{"kind": "document", "id": "doc_t", "title": "Triton", "evidence": [{"kind": "passage", "id": "pas_1", "snippet": "tiles"}]}]}
+    passage = {"results": [{"kind": "document", "id": "doc_t", "title": "Triton", "evidence": [{"kind": "passage", "id": "pas_1", "snippet": "length"}]}]}
     cli = CLI({("search", "passage", None): passage})
-    got = Library(cli).retrieve("tile size shared memory")
-    assert got == [{"id": "pas_1", "kind": "passage", "document_title": "Triton", "title": "Triton", "excerpt": "tiles"}]
-    assert ["search", "tile size shared memory", "--kind", "passage", "--filter", "annotated.eq=true", "--limit", "2"] in cli.calls
+    got = Library(cli).retrieve("accumulation error grows with length")
+    assert got == [{"id": "pas_1", "kind": "passage", "document_title": "Triton", "title": "Triton", "excerpt": "length"}]
+    assert ["search", "accumulation error grows with length", "--kind", "passage", "--filter", "annotated.eq=true", "--limit", "2"] in cli.calls
     convo = {"results": [{"kind": "conversation", "id": "cnv_9", "title": "Chat", "snippet": "about tiles"}]}
     assert Library(CLI({("search", "conversation", None): convo})).retrieve("tiles")[0]["kind"] == "conversation"
 
