@@ -16,7 +16,8 @@ Project: Multi-POV Research War Room. Solo build by Joe for Hack the Valley 11, 
 - **LLM:** originally NVIDIA NIM with Nemotron and DeepSeek. After the model benchmark (both were too slow), hypotheses go to OmniRoute, then `gemini-3.5-flash-lite`, then NIM `openai/gpt-oss-20b`, and post-mortem prose to `gemini-3.8-flash` with a factual fallback. Keys in a gitignored `.env`. See `CLAUDE.md` and `docs/results.md`.
 - **Stack:** FastAPI backend with WebSocket, React (Vite) front end, layout `src/{harness,agent,server,ui}`, `runs/` gitignored, `tests/`.
 - **Testing:** pytest and vitest. Markers `gpu` and `papiers` skipped by default. Golden test compares orchestrator events to a JSON export of `src/contract/demo-script.ts`. Per phase prompts are in `test-prompts.md`.
-- **Repo rules:** never commit or push unless Joe says so, no em dashes, minimal comments, concise names, no defensive boilerplate. Ask before assuming.
+- **Repo rules:** commit and push are allowed, in small commits, but never `.env`, `runs/`, tokens or API keys, and the repo visibility stays as it is. No em dashes, minimal comments, concise names, no defensive boilerplate. Ask before assuming.
+- **Demo freeze:** the demo replay is `demo/replay.jsonl`, committed and tagged `demo-freeze`, with the exports in `docs/examples/exports/`. Any new demo recording is frozen with `scripts/freeze.sh <session-folder>`, which checks the log ends with `session_finished` and has a `final_report`, and fails on secret patterns. The judging build opens `demo/replay.jsonl` first.
 
 ## Contract (src/contract)
 
@@ -24,7 +25,7 @@ Project: Multi-POV Research War Room. Solo build by Joe for Hack the Valley 11, 
 
 ## Demo
 
-Default demo is replay of a recorded real run (log every event as JSONL in the contract format, no mock flag), labeled "recorded run" on screen. Idle gaps compressed and disclosed. A "run one real iteration" option at the table was recommended for the Authenticity criterion but is not yet confirmed by Joe. A demo video is optional, skip unless time is left.
+Default demo is replay of a recorded real run, frozen in `demo/replay.jsonl` (log every event as JSONL in the contract format, no mock flag), labeled "recorded run" on screen. Idle gaps compressed and disclosed. A "run one real iteration" option at the table was recommended for the Authenticity criterion but is not yet confirmed by Joe. A demo video is optional, skip unless time is left.
 
 ## Scope tiers
 

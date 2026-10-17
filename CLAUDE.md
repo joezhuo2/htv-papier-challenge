@@ -8,7 +8,8 @@ Deadlines (America/Toronto): initial Devpost submission Saturday 9pm, final Sund
 
 ## Standing rules
 
-- Never run `git commit`, `git push`, or any command that publishes code unless I explicitly say so in that message. Staging nothing and leaving changes in the working tree is the default.
+- Commit and push are allowed for this project, in small commits. Never commit `.env`, anything under `runs/`, tokens or API keys, and never change the repo's visibility.
+- Freeze any new demo recording with `scripts/freeze.sh <session-folder>` (`--as <file>` for a fallback). It copies the log to `demo/` and the exports to `docs/examples/exports/` and fails on any secret pattern; commit only after it prints clean.
 - Never use em dashes in code, comments, docs, or chat replies.
 - Write paragraphs in docs, comments, and replies as continuous strings with no mid-paragraph line breaks.
 - Do not comment obvious code. Keep comments concise and limited to complex edge cases.
