@@ -46,3 +46,6 @@
 23. A hunch directive gets exactly one `plan_change`, when it arrives, saying whether it is a retest; later notices about it are `agent_log` lines. A help request still open when the session ends gets one `plan_change` "Session ended with hqN unanswered: <why>".
 24. `help_requested` is reissued at most once per re-judge and only when it changed. A request for a branch rejected while its run was measured is filed against the successor (`blocks` names it), and a rejected branch never gets another `branch_status`.
 25. `papiers_context.note.annotation` has LaTeX dollar delimiters removed.
+26. `hybrid_proposed` no longer needs a `conflict_detected` first: it combines the best confirmed run with the best confirmed single-knob change from another branch, and can arrive at the cap, where the session waits for approval or the deadline.
+27. `Hypothesis` gains optional `papiers`, the id of the Papiers item its note cites; the note names the document instead of the id. Older logs keep the id in the note.
+28. `session_finished.best` and `final_report.best` give vs naive and vs eager as the session baselines' latency over the best run's latency (the best is the fastest confirmed run), not its same-window ratios.
