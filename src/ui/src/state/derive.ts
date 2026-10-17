@@ -58,7 +58,10 @@ export const predictionText = (v: View, h: HypothesisView) => {
   return `at least ${times(h.prediction.min_speedup)} vs ${vs}${at}, error ${boundText(h.prediction.bound)}`
 }
 
-export const papiersNote = (h?: Hypothesis) => h?.note?.match(/papiers note ((?:cnv|hl|nte|psg)_[0-9a-zA-Z]+)/i)?.[1]
+export const papiersNote = (h?: Hypothesis) => h?.note?.match(/papiers (?:note|highlight|passage|conversation) ((?:cnv|hl|nte|psg|pas)_[0-9a-zA-Z]+)/i)?.[1]
+
+// how a retrieved item is named: the user's own marks are "your highlight" and "your note"
+export const kindName = (kind?: string) => kind === 'highlight' ? 'your highlight' : kind === 'note' ? 'your note' : kind ?? 'note'
 
 export const hypothesisOf = (v: View, id?: string) => v.hypotheses.find(h => h.id === id)
 export const runOf = (v: View, id?: string) => v.runs.find(r => r.id === id)

@@ -1,6 +1,7 @@
 import type { PostMortem } from '@contract/types'
 import type { View } from '../state/reducer'
 import { ruledOut, sci } from '../state/derive'
+import { NoteBody, NoteChip } from './PapiersPanel'
 
 function Sweep({ sweep }: { sweep: PostMortem['sweep'] }) {
   const w = 320, h = 150, m = { l: 48, r: 16, t: 12, b: 28 }
@@ -52,6 +53,15 @@ export function PostMortemCard({ view, pm, open, onToggle }: { view: View; pm: P
           <dt>Will not retry</dt><dd>{ruledOut(view, pm.hypothesis)}</dd>
           <dt>Pivot</dt><dd>{pm.pivot}</dd>
         </dl>
+        {pm.note ? (() => {
+          const found = view.notes.find(n => n.id === pm.note)
+          return (
+            <div className="stack" style={{ gap: 4 }} data-testid="pm-note">
+              <span className="small"><span className="muted">Read from Papiers for this cause:</span> <NoteChip view={view} id={pm.note} /></span>
+              {found ? <NoteBody note={found} /> : null}
+            </div>
+          )
+        })() : null}
       </div>
     </details>
   )

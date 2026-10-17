@@ -1,5 +1,5 @@
 import type {
-  Bound, Branch, Check, DemoEvent, Directive, HelpRequest, Hypothesis, LedgerEntry, Lens, Metrics, Params, PostMortem, Report, Summary, Verdict,
+  Bound, Branch, Check, DemoEvent, Directive, HelpRequest, Hypothesis, LedgerEntry, Lens, Metrics, PapiersNote, Params, PostMortem, Report, Summary, Verdict,
 } from '@contract/types'
 
 export interface VerdictView { verdict: Verdict; provisional: boolean; reason: string; checks: Check[]; t: number; bound: Bound }
@@ -35,7 +35,7 @@ export interface HelpView {
   cancelled?: string
 }
 
-export interface NoteView { id: string; title: string; excerpt: string; t: number; query?: string }
+export interface NoteView extends PapiersNote { t: number; query?: string }
 
 // every Papiers read in the log, with or without a returned note
 export interface ReadView { t: number; query?: string; note?: NoteView; mock: boolean }

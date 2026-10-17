@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FeedItem, View } from '../state/reducer'
 import { boundText, clock, hypothesisOf, lensName, ms, parentBest, predictionText, runOf, sci, times, windowText } from '../state/derive'
 import { Def, MockTag, VerdictChip } from './Glyph'
-import { InformedBy, NoteChip, NoteText } from './PapiersPanel'
+import { InformedBy, NoteBody, NoteChip, NoteText } from './PapiersPanel'
 import type { Command } from '@contract/types'
 import { HybridCard } from './Tier2'
 
@@ -189,10 +189,10 @@ export function SummaryFeed(p: Props) {
             )
           case 'note':
             return (
-              <p key={i} className="line" title={f.note?.excerpt}>
+              <div key={i} className="line" title={f.note?.excerpt}>
                 <span className="mono">{clock(f.t)}</span>{' '}
-                {f.note ? <><span className="strong">Read Papiers:</span> <NoteChip view={view} id={f.note.id} /></> : <><span className="strong">Searched Papiers:</span> no matching notes for "{f.query ?? 'this topic'}"</>}
-              </p>
+                {f.note ? <><span className="strong">Read Papiers:</span> <NoteChip view={view} id={f.note.id} />{f.query ? <span className="muted small"> for "{f.query}"</span> : null}<NoteBody note={f.note} /></> : <><span className="strong">Searched Papiers:</span> no matching note for "{f.query ?? 'this topic'}"</>}
+              </div>
             )
           case 'branch':
             return (

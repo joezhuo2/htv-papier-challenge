@@ -9,7 +9,7 @@ import { fold } from '../src/state/reducer'
 // the agent's golden session (tests/fixtures/golden_session.jsonl, kept current by tests/test_golden.py) against the mock contract
 const golden = parseLog(readFileSync(join(__dirname, '../../../tests/fixtures/golden_session.jsonl'), 'utf8'))
 const keys = (e: object) => Object.keys(e).filter(k => k !== 't' && k !== 'mock').sort()
-const OPTIONAL: Partial<Record<DemoEvent['type'], string[]>> = { branch_created: ['reason'], papiers_context: ['query', 'note'], run_finished: ['error'], help_answered: ['note'] }
+const OPTIONAL: Partial<Record<DemoEvent['type'], string[]>> = { branch_created: ['reason'], papiers_context: ['query', 'note'], run_finished: ['error'], help_answered: ['note'], post_mortem: ['note'] }
 
 describe('golden session', () => {
   it('passes log validation and folds into a finished session', () => {

@@ -83,6 +83,17 @@ export interface Check {
   pass: boolean | null
 }
 
+// one retrieved Papiers item. kind and the fields after it are absent in logs recorded before highlights were read
+export interface PapiersNote {
+  id: string
+  title: string
+  excerpt: string
+  kind?: 'highlight' | 'note' | 'passage' | 'conversation'
+  document_title?: string
+  highlight_text?: string
+  annotation?: string // the user's own words on a highlight
+}
+
 export interface PostMortem {
   hypothesis: string
   expected: string
@@ -90,6 +101,7 @@ export interface PostMortem {
   cause: string
   pivot: string
   sweep: { k: number; adv_error: number }[]
+  note?: string // the Papiers id retrieved for the measured cause, when one matched
 }
 
 export interface Delta {
@@ -151,7 +163,7 @@ type Ev<T extends string, P> = { t: number; mock?: true; type: T } & P
 export type DemoEvent =
   | Ev<'session_started', { baselines: { eager: Metrics; naive: Metrics }; branch: Branch }>
   // one event per read: the search query and one returned note, highlight or conversation, or no note when the search returned nothing
-  | Ev<'papiers_context', { query?: string; note?: { id: string; title: string; excerpt: string } }>
+  | Ev<'papiers_context', { query?: string; note?: PapiersNote }>
   | Ev<'directive_added', { directive: Directive }>
   | Ev<'conflict_detected', { directives: string[]; reason: string }>
   | Ev<'branch_created', { branch: Branch; reason?: string }>

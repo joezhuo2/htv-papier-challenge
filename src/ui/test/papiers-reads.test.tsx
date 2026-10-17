@@ -63,8 +63,8 @@ describe('Papiers reads in the event log', () => {
   it('shows no matching notes for an empty search, in the panel and the feed', () => {
     const v = fold([start, { t: 3200, type: 'papiers_context', query: 'accumulation numerical error' }])
     render(<><PapiersPanel view={v} /><SummaryFeed view={v} onSelectRun={() => {}} onPostMortem={() => {}} onReport={() => {}} onSend={() => {}} onHybrid={() => {}} /></>)
-    expect(screen.getByTestId('papiers-read').textContent).toBe('0:03query "accumulation numerical error"No matching notes.')
-    expect(screen.getByText(/no matching notes for "accumulation numerical error"/)).toBeTruthy()
+    expect(screen.getByTestId('papiers-read').textContent).toBe('0:03query "accumulation numerical error"No matching note.')
+    expect(screen.getByText(/no matching note for "accumulation numerical error"/)).toBeTruthy()
     expect(v.notes).toHaveLength(0)
   })
 
@@ -87,7 +87,7 @@ describe('Papiers reads in the event log', () => {
     render(<PapiersPanel view={fold([])} />)
     fireEvent.change(screen.getByLabelText('Search your library'), { target: { value: 'quantization' } })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Search' })) })
-    expect(screen.getByText('No matching notes.')).toBeTruthy()
+    expect(screen.getByText('No matching note.')).toBeTruthy()
   })
 
   it('the mock replay cites n1 on H0 with its query', () => {
@@ -96,5 +96,28 @@ describe('Papiers reads in the event log', () => {
       ['Triton matrix multiplication tiling warps pipeline stages', 'n1'],
       ['FP16 accumulation throughput tensor cores', 'n2'],
     ])
+  })
+})
+
+describe('Papiers highlights', () => {
+  const t = 1000
+  const hl = { id: 'hl_da32a6e4a587', title: 'MIXED PRECISION TRAINING', excerpt: 'FP16 dot products accumulate into FP32.', kind: 'highlight' as const,
+    document_title: 'MIXED PRECISION TRAINING', highlight_text: 'FP16 dot products accumulate into FP32.', annotation: 'This is why our FP16 accumulator fails.' }
+
+  it('renders a highlight with its document title, the highlighted text and the annotation labelled your note', () => {
+    const view = fold([{ t, type: 'papiers_context', query: 'accumulation precision FP16', note: hl }])
+    render(<PapiersPanel view={view} />)
+    const body = within(screen.getByTestId('papiers-read')).getByTestId('note-body')
+    expect(body.textContent).toContain('your highlight')
+    expect(body.textContent).toContain('MIXED PRECISION TRAINING')
+    expect(body.textContent).toContain('FP16 dot products accumulate into FP32.')
+    expect(within(body).getByTestId('your-note').textContent).toBe('your note: This is why our FP16 accumulator fails.')
+  })
+
+  it('keeps an old-shape note without kind valid', () => {
+    const view = fold([{ t, type: 'papiers_context', query: 'q', note: { id: 'cnv_6630997c', title: 'Triton tutorial', excerpt: 'Tiles.' } }])
+    render(<PapiersPanel view={view} />)
+    expect(screen.getByTestId('note-body').textContent).toContain('Triton tutorial')
+    expect(screen.queryByTestId('your-note')).toBeNull()
   })
 })

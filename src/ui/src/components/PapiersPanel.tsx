@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import type { HypothesisView, View } from '../state/reducer'
-import { cleanNote, clock, papiersNote } from '../state/derive'
+import type { HypothesisView, NoteView, View } from '../state/reducer'
+import { cleanNote, clock, kindName, papiersNote } from '../state/derive'
 import { MockTag } from './Glyph'
 
 interface Item { id: string; kind: string; title: string; excerpt: string }
@@ -18,14 +18,26 @@ export function showNote(id: string) {
   el.classList.add('flash')
 }
 
-const NOTE_ID = /\b((?:cnv|hl|nte|psg)_[0-9a-zA-Z]{4,})\b/
+const NOTE_ID = /\b((?:cnv|hl|nte|psg|pas)_[0-9a-zA-Z]{4,})\b/
 
 export function NoteChip({ view, id }: { view: View; id: string }) {
   const found = view.notes.find(n => n.id === id)
   return (
     <button type="button" className="tag note-chip" onClick={() => showNote(id)} title={id} data-testid="note-chip">
-      Papiers note{found ? `: ${cleanNote(found).title}` : ''}
+      Papiers {found?.kind && found.kind !== 'note' ? found.kind : 'note'}{found ? `: ${found.document_title || cleanNote(found).title}` : ''}
     </button>
+  )
+}
+
+// a retrieved item: the document title, the highlighted text, and the user's annotation labelled as their own words
+export function NoteBody({ note }: { note: NoteView }) {
+  const text = note.highlight_text ?? cleanNote(note).excerpt
+  return (
+    <div className="stack note-body" style={{ gap: 2 }} data-testid="note-body">
+      <span className="small"><span className="tag">{kindName(note.kind)}</span> <span className="strong">{note.document_title || cleanNote(note).title}</span></span>
+      {text ? <blockquote className="small clamp" style={{ margin: 0 }}>{text}</blockquote> : null}
+      {note.annotation ? <p className="small" data-testid="your-note"><span className="muted">your note:</span> {note.annotation}</p> : null}
+    </div>
   )
 }
 
@@ -52,8 +64,9 @@ export function InformedBy({ view, h }: { view: View; h: HypothesisView }) {
   const note = found && cleanNote(found)
   return (
     <button className="informed" onClick={() => showNote(id)} data-testid="informed-by" title={note?.excerpt}>
-      <span className="strong">Informed by Papiers note</span>
-      {note ? <span className="oneline muted">{note.title}</span> : null}
+      <span className="strong">Informed by {found?.kind ? kindName(found.kind) : 'Papiers note'}</span>
+      {found ? <span className="oneline muted">{found.document_title || note!.title}</span> : null}
+      {found?.annotation ? <span className="oneline small">your note: {found.annotation}</span> : null}
     </button>
   )
 }
@@ -87,13 +100,12 @@ export function PapiersPanel({ view }: { view: View }) {
         return (
           <div key={i} className="card flash" id={first ? anchor(r.note!.id) : undefined} data-testid="papiers-read" title={note?.excerpt}>
             <p className="meta"><span>{clock(r.t)}</span>{r.query ? <span>query "{r.query}"</span> : null}<MockTag on={r.mock} /></p>
-            {r.note && note ? (
+            {r.note ? (
               <>
-                <span className="strong small">{note.title}</span>
-                <p className="small clamp">{note.excerpt}</p>
+                <NoteBody note={r.note} />
                 <CopyId id={r.note.id} />
               </>
-            ) : <p className="small muted">No matching notes.</p>}
+            ) : <p className="small muted">No matching note.</p>}
           </div>
         )
       })}
@@ -106,7 +118,7 @@ export function PapiersPanel({ view }: { view: View }) {
       </form>
       {state === 'loading' ? <p className="small muted">Searching Papiers...</p> : null}
       {state !== 'idle' && state !== 'loading' ? <p className="small" role="alert">{state}</p> : null}
-      {items && items.length === 0 ? <p className="empty">No matching notes.</p> : null}
+      {items && items.length === 0 ? <p className="empty">No matching note.</p> : null}
       {items?.map(r => {
         const note = cleanNote(r)
         return (
