@@ -1002,9 +1002,13 @@ class Orchestrator:
             if h:
                 cite = hint[1] if hint else None
                 claim = h["claim"]
-                if h["adjusted"]:
-                    claim = claim_text(start, h["params"], h["prediction"], self.bounds(b.lens))
-                    cite = f"{cite}. {h['adjusted']}" if cite else h["adjusted"]
+                wrong = hyp.mismatches(claim, h["params"])
+                if h["adjusted"] or wrong:
+                    # rebuilt from the params that run, keeping any run ids the model cited
+                    cited = list(dict.fromkeys(re.findall(r"\bH\d+\b", claim)))
+                    claim = claim_text(start, h["params"], h["prediction"], self.bounds(b.lens)) + (f" Revisits {', '.join(cited)}." if cited else "")
+                    fix = h["adjusted"] or f"Claim rebuilt from the final params, the model's text named {', '.join(wrong)}"
+                    cite = f"{cite}. {fix}" if cite else fix
                 new = self.new_hyp(b, claim, h["prediction"], h["params"], cite)
                 self.spend(new, hint)
                 if hint and hint[3] is not None and first:

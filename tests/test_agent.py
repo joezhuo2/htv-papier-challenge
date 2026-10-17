@@ -1409,3 +1409,20 @@ def test_every_rejection_gets_a_post_mortem_with_registers_spills_and_the_param_
     drive(o, [(judged(o, 1), SPEED), (asked(o), {"type": "add_directive", "lens": "precision", "text": "Max error under 1e-3 on both batches."})])
     rejected = {e["hypothesis"] for e in of(o, "verdict") if e["verdict"] == "rejected"}
     assert rejected and rejected <= {e["post_mortem"]["hypothesis"] for e in of(o, "post_mortem")}
+
+
+def test_claim_numbers_must_match_the_final_params():
+    from harness.kernel import Params
+    p = Params(128, 128, 32, 4, 3)
+    assert hyp.mismatches("Using 128x128x32 tiles with 4 warps and 3 stages, block_k = 32, is faster.", p) == []
+    assert hyp.mismatches("A 64x64 tile with 8 warps and num_stages=4 and BLOCK_M=64 helps.", p) == ["64x64", "8 warps", "num_stages=4", "block_m=64"]
+    assert hyp.mismatches("At least 1.3x faster than 2 runs ago.", p) == []
+
+
+def test_a_claim_that_names_other_numbers_is_rebuilt_from_the_params(tmp_path):
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"warps": 8}, 1.05, claim="Going to 8 warps with 4 stages beats H0."), default="no json"), main_iters=2)
+    o.run()
+    h1 = of(o, "hypothesis_proposed")[1]["hypothesis"]
+    assert h1["claim"].startswith("Warps 4 to 8, giving 128x128x32 tiles, 8 warps, 3 stages") and h1["claim"].endswith(" Revisits H0.")
+    assert "4 stages" not in h1["claim"] and "the model's text named 4 stages" in h1["note"]
+    assert hyp.mismatches(h1["claim"].split(", giving ")[1], o.hyps[1].params) == []

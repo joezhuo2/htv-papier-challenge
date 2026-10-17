@@ -99,6 +99,23 @@ def parse(text):
             "prediction": {k: p[k] for k in ("min_speedup", "vs", "max_error")}, "params": fitted, "adjusted": adjusted}, None
 
 
+KNOB_RE = {
+    "warps": re.compile(r"\b(\d+)[- ]warps?\b|\b(?:num_)?warps\s*(?:=|:|of|is)\s*(\d+)\b"),
+    "stages": re.compile(r"\b(\d+)[- ](?:pipeline[- ])?stages?\b|\b(?:num_)?stages\s*(?:=|:|of|is)\s*(\d+)\b"),
+    **{f"block_{k}": re.compile(rf"\bblock_{k}\s*(?:=|:|of|is)?\s*(\d+)\b") for k in "mnk"},
+}
+
+
+def mismatches(claim, p):
+    """Tile sizes, warps and stages a claim names that differ from the params that will run, as the quoted phrases."""
+    t = claim.lower()
+    bad = [m.group(0) for m in re.finditer(r"\b(\d+)\s*x\s*(\d+)(?:\s*x\s*(\d+))?\b", t)
+           if [int(g) for g in m.groups() if g] != [p.block_m, p.block_n, p.block_k][:len([g for g in m.groups() if g])]]
+    for k, rx in KNOB_RE.items():
+        bad += [m.group(0) for m in rx.finditer(t) if int(next(g for g in m.groups() if g)) != getattr(p, k)]
+    return bad
+
+
 BOUND_RE = re.compile(r"(\d+(?:\.\d+)?e-\d+|0\.0+\d+)", re.IGNORECASE)
 
 
