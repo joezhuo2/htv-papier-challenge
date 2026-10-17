@@ -10,21 +10,34 @@ from openai import OpenAI
 ROOT = Path(__file__).resolve().parents[2]
 CACHE = ROOT / "runs" / "llm_cache"
 BASE_URL = "https://integrate.api.nvidia.com/v1"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 load_dotenv(ROOT / ".env")
 FAST_MODEL = os.environ.get("FAST_MODEL", "openai/gpt-oss-20b")
 STRONG_MODEL = os.environ.get("STRONG_MODEL", "google/gemma-4-31b-it")
+# Gemini is the default provider when GEMINI_API_KEY is set, NIM (the models above) is the fallback
+GEMINI_FAST_MODEL = os.environ.get("GEMINI_FAST_MODEL", "gemini-3.5-flash-lite")
+GEMINI_STRONG_MODEL = os.environ.get("GEMINI_STRONG_MODEL", "gemini-3.8-flash")
+PROVIDERS = {"nim": (BASE_URL, "NVIDIA_API_KEY"), "gemini": (GEMINI_URL, "GEMINI_API_KEY")}
 
 # Per-model request extras. Nemotron reasons by default and spends the whole budget on reasoning_content.
 EXTRA = {
     "nvidia/nemotron-3.5-lightning-30b-a3b": {"chat_template_kwargs": {"enable_thinking": False}},
     "openai/gpt-oss-20b": {"reasoning_effort": "low"},
+    # thinking cannot be turned off on Gemini 3.x, low is the cheapest documented level
+    GEMINI_FAST_MODEL: {"reasoning_effort": "low"},
+    GEMINI_STRONG_MODEL: {"reasoning_effort": "low"},
 }
 
 
+def available(provider):
+    return bool(os.environ.get(PROVIDERS[provider][1]))
+
+
 class Client:
-    def __init__(self, timeout=120, max_retries=2, cache=True):
-        self.api = OpenAI(base_url=BASE_URL, api_key=os.environ["NVIDIA_API_KEY"], timeout=timeout, max_retries=max_retries)
+    def __init__(self, timeout=120, max_retries=2, cache=True, provider="nim"):
+        url, key = PROVIDERS[provider]
+        self.api = OpenAI(base_url=url, api_key=os.environ[key], timeout=timeout, max_retries=max_retries)
         self.cache = cache
 
     def complete(self, messages, model=FAST_MODEL, temperature=0.6, max_tokens=1024, tag=""):
