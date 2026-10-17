@@ -991,7 +991,7 @@ def test_constraint_directives_are_bounds_and_a_repeated_hunch_is_retested_on_th
     assert any("already tested in H3 (rejected, 0.86x vs its parent) on 128x128x32 tiles" in t for t in texts)
     h4 = hyps["H4"]
     assert h4["params"] == w8 | {"gelu": "approx"} and h4["note"] == "Hunch from the Speed lens in directive d2, a retest of H3 on the current best tiles"
-    assert h4["claim"].startswith("Retest of H3: gelu exact to approx on the current best 128x128x32 tiles, 8 warps")
+    assert h4["claim"].startswith("Retest of H3: gelu exact to approx on the current best 128x128x32 tiles, 8 warps, 3 stages is at least 1.02x")
     assert not any(tag.startswith(f"{h4['branch']}-1") for _, tag, _ in o.ask.calls)  # built in code, no model call
     assert_contract(o.log.events)
 
@@ -1150,3 +1150,14 @@ def test_preflight_reports_papiers_counts_and_warns_without_highlights(monkeypat
     assert r == {"ok": True, "warn": True, "detail": "the CLI sees 0 highlights, 2 notes and 6 documents. No highlights, so hypotheses fall back to passages and conversations"}
     monkeypatch.setattr(papiers.Library, "counts", lambda self: {"highlight": 5, "note": 0, "document": 6})
     assert app.run_check(app.check_papiers) == {"ok": True, "detail": "the CLI sees 5 highlights, 0 notes and 6 documents"}
+
+
+
+def test_a_tiling_hypothesis_never_cites_a_note_retrieved_for_another_change(tmp_path):
+    def context(q):
+        return [{"id": "hl_acc1", "kind": "highlight", "title": "Mixed precision", "excerpt": "FP32 accumulation."}] if "accumulation" in q else []
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.02), default="no json"), main_iters=1, branch_iters=2, context=context, help_deadline_s=0.3)
+    run_with(o, [(1, "precision", "Max error under 1e-3 on both batches.")])
+    tiling = next(e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["params"]["stages"] == 4)
+    assert "hl_acc1" not in (tiling.get("note") or "")
+    assert any(e.get("note", {}).get("id") == "hl_acc1" for e in of(o, "papiers_context"))  # read for the prompt, not cited

@@ -218,7 +218,6 @@ class Orchestrator:
         self.runs = 0
         self.context = context
         self.read: dict[str, list] = {}
-        self.prompted: dict[str, list] = {}  # branch -> Papiers items the last prompt was given
         self.help_deadline_s = help_deadline_s
         self.max_hyps, self.retry_s = max_hyps, retry_s
         self.headroom = headroom
@@ -863,7 +862,6 @@ class Orchestrator:
         directives = [d for d in self.directives if b.lens in ("both", d["lens"])]
         planned = facet(start, replace(start, **{k: v for k, v in hint[3].items() if k in start.dict()})) if hint and hint[3] else None
         notes = self.papiers(planned or QUERIES[b.lens])
-        self.prompted[b.id] = notes
         messages = hyp.prompt(b.dict(), directives, {"params": start.dict(), "metrics": metrics.contract()}, tried, self.avoid,
                               ([f"Suggestion from a human lens owner, test this next: {hint[0]}"] if hint and hint[3] is not None else [])
                               + [f"Papiers {n['id']} ({n['title']}): {n['excerpt']}" for n in notes], self.bounds(b.lens)["standard"], self.headroom)
@@ -908,7 +906,8 @@ class Orchestrator:
                                                            f"so \"{hint[0][:120]}\" is not retested. The earlier result is {e.id} ({e.judgment.verdict}).")
             return None
         bound = self.bounds(b.lens)
-        claim = (f"Retest of {e.id}: {change(start, p)} on the current best {params_text(start)} is at least 1.02x faster than that configuration, "
+        tiles = f"{start.block_m}x{start.block_n}x{start.block_k} tiles, {start.warps} warps, {start.stages} stages"
+        claim = (f"Retest of {e.id}: {change(start, p)} on the current best {tiles} is at least 1.02x faster than the same config without it, "
                  f"with standard max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound.")
         h = self.new_hyp(b, claim, {"min_speedup": 1.02, "vs": "parent_best", "max_error": bound["standard"]}, p,
                          f"{hint[1]}, a retest of {e.id} on the current best tiles")
@@ -1033,11 +1032,11 @@ class Orchestrator:
         return self.read[query]
 
     def cite(self, h: Hyp, start: Params):
-        """Before the run: reads Papiers for the change this hypothesis makes and cites the top item in its note, or the context the
-        prompt was given when the change query finds nothing. Only what was retrieved is cited."""
-        found = self.papiers(facet(h.base or start, h.params)) or (self.prompted.pop(h.branch, None) or [])
+        """Before the run: reads Papiers for the change this hypothesis makes and cites the top item in its note. Nothing is cited when
+        the change query finds nothing, even if the prompt had other context, so a citation is always about the change under test."""
+        found = self.papiers(facet(h.base or start, h.params))
         if found:
-            h.note = f"{h.note}. {cite_text(found[0])}" if h.note else cite_text(found[0])
+            h.note = f"{h.note.rstrip('.')}. {cite_text(found[0])}" if h.note else cite_text(found[0])
 
     def ask_or_wait(self, messages, tag, branch):
         """Calls the fast model. On a timeout or API error the session shows it and waits for a retry command, or retries by
