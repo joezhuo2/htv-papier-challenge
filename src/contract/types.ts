@@ -38,10 +38,18 @@ export interface Directive {
   threshold?: number
 }
 
+// The error bound a run is judged against. Speed tolerates more error on the standard batch, Precision gates both batches at 1e-3.
+export interface Bound {
+  standard: number
+  adversarial: number | null // null while no lens gates the adversarial batch, which is still measured on every run
+  set_by: Lens | 'default'
+}
+
 export interface Prediction {
   min_speedup: number
   vs: 'naive' | 'parent_best'
-  max_error: number
+  max_error: number // equals bound.standard
+  bound: Bound
 }
 
 export interface Hypothesis {
@@ -136,7 +144,8 @@ type Ev<T extends string, P> = { t: number; mock?: true; type: T } & P
 
 export type DemoEvent =
   | Ev<'session_started', { baselines: { eager: Metrics; naive: Metrics }; branch: Branch }>
-  | Ev<'papiers_context', { note: { id: string; title: string; excerpt: string } }>
+  // one event per read: the search query and one returned note, highlight or conversation, or no note when the search returned nothing
+  | Ev<'papiers_context', { query?: string; note?: { id: string; title: string; excerpt: string } }>
   | Ev<'directive_added', { directive: Directive }>
   | Ev<'conflict_detected', { directives: string[]; reason: string }>
   | Ev<'branch_created', { branch: Branch; reason?: string }>
@@ -144,7 +153,7 @@ export type DemoEvent =
   | Ev<'hypothesis_proposed', { hypothesis: Hypothesis }>
   | Ev<'run_started', { run: string; branch: string; hypothesis: string }>
   | Ev<'run_finished', { run: Run }>
-  | Ev<'verdict', { hypothesis: string; verdict: Verdict; provisional: boolean; reason: string; checks: Check[] }>
+  | Ev<'verdict', { hypothesis: string; verdict: Verdict; provisional: boolean; reason: string; checks: Check[]; bound: Bound }>
   | Ev<'post_mortem', { post_mortem: PostMortem }>
   | Ev<'summary', { summary: Summary }>
   | Ev<'help_requested', { help: HelpRequest }>
