@@ -11,6 +11,8 @@ interface Props {
   onPostMortem: (h: string) => void
   onReport: () => void
   hybrid: (item: Extract<FeedItem, { kind: 'hybrid' }>) => ReactNode
+  // working states come only from real events: running cards outside recorded replay, choosing only in live mode
+  working?: { runs: boolean; choosing: boolean }
 }
 
 type SummaryItem = Extract<FeedItem, { kind: 'summary' }>
@@ -140,6 +142,12 @@ export function SummaryFeed(p: Props) {
       box.scrollTop = Math.min(end.current.offsetTop - box.clientHeight + 12, last.offsetTop - 12)
   }, [view.feed.length])
 
+  const pending = view.runs.filter(r => r.finished === undefined)
+  const lastVerdict = Math.max(-1, ...Object.values(view.trail).flat().map(t => t.t))
+  const lastProposal = Math.max(-1, ...view.hypotheses.map(h => h.t))
+  const choosing = !!p.working?.choosing && view.started && !view.finished && pending.length === 0
+    && lastVerdict > lastProposal && view.branches.some(b => b.status === 'running')
+
   const optionLabel = (help: string, option: string) =>
     view.helps.find(h => h.help.id === help)?.help.options.find(o => o.id === option)?.label ?? option
 
@@ -198,6 +206,17 @@ export function SummaryFeed(p: Props) {
             return <div key={i}>{p.hybrid(f)}</div>
         }
       })}
+      {p.working?.runs ? pending.map(r => {
+        const h = hypothesisOf(view, r.hypothesis)
+        return (
+          <article key={r.id} className="card working" data-testid="pending-run" aria-live="polite">
+            <h3>Running <span className="mono">{r.id}</span> on <span className="mono">{r.branch}</span></h3>
+            {h ? <p className="small"><span className="muted">Predicted:</span> {predictionText(view, h)}</p> : null}
+            <p className="meta"><span className="mono">{h?.id}</span><span>started {clock(r.started)}</span></p>
+          </article>
+        )
+      }) : null}
+      {choosing ? <p className="line working-line" data-testid="choosing" aria-live="polite">Choosing next hypothesis</p> : null}
       <div ref={end} />
     </div>
   )

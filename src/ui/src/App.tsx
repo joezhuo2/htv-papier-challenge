@@ -86,7 +86,7 @@ export function App({ source }: { source: Source }) {
           ) : null}
           {tab === 'report' && view.report ? <ReportView view={view} /> : (
             <>
-              <BranchGraph view={view} onSelectBranch={selectBranch} onSelectRun={selectRun} />
+              <BranchGraph view={view} onSelectBranch={selectBranch} onSelectRun={selectRun} showPending={source.mode !== 'replay'} />
               <div className="chart-row">
                 <MetricChart view={view} onSelectRun={selectRun} />
                 <AdvPanel view={view} />
@@ -103,6 +103,7 @@ export function App({ source }: { source: Source }) {
           ))}
           <RunDetail view={view} onClose={() => dispatch({ type: 'ui/select', selected: {} })} />
           <SummaryFeed
+            working={{ runs: source.mode !== 'replay', choosing: source.mode === 'live' }}
             view={view} onSelectRun={selectRun} onPostMortem={openPm} onReport={() => setTab('report')}
             hybrid={f => <HybridCard view={view} item={f} onSend={s.send} onDecide={approved => dispatch({ type: 'ui/hybrid', approved })} />}
           />

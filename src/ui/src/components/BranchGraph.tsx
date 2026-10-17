@@ -8,6 +8,7 @@ interface Props {
   view: View
   onSelectBranch: (b: string) => void
   onSelectRun: (r: string) => void
+  showPending?: boolean
 }
 
 const statusWord: Record<BranchView['status'], string> = {
@@ -32,7 +33,7 @@ const clip = (s: string, px: number) => {
   return s.length > n ? `${s.slice(0, n - 1)}...` : s
 }
 
-export function BranchGraph({ view, onSelectBranch, onSelectRun }: Props) {
+export function BranchGraph({ view, onSelectBranch, onSelectRun, showPending = true }: Props) {
   const [ref, { width, height }] = useSize<HTMLDivElement>()
   const pad = 16
   // five columns matches the usual session, so nodes do not move as branches appear
@@ -65,7 +66,7 @@ export function BranchGraph({ view, onSelectBranch, onSelectRun }: Props) {
         {view.branches.map(b => {
           const { x, y } = pos.get(b.id)!
           const sel = view.selected.branch === b.id
-          const runs = view.runs.filter(r => r.branch === b.id)
+          const runs = view.runs.filter(r => r.branch === b.id && (showPending || r.finished !== undefined))
           const blocker = view.helps.find(h => h.help.blocks === b.id && !h.answer)
           const s = b.status
           const dash = s === 'rejected' ? '5 3' : undefined
@@ -109,7 +110,8 @@ export function BranchGraph({ view, onSelectBranch, onSelectRun }: Props) {
                 const final = vd && !vd.provisional ? vd.verdict : undefined
                 const rsel = view.selected.run === r.id
                 return (
-                  <g key={r.id} {...activate(() => onSelectRun(r.id))} aria-label={`run ${r.id}, ${final ?? (r.metrics ? 'measured' : 'running')}`}>
+                  <g key={r.id} {...activate(() => onSelectRun(r.id))} aria-label={`run ${r.id}, ${final ?? (r.metrics ? 'measured' : r.failed ? 'failed' : 'running')}`}
+                    data-testid={r.finished === undefined ? `pending-${r.id}` : undefined} className={r.finished === undefined ? 'working' : undefined}>
                     {rsel ? <circle cx={cx} cy={cy} r="8.5" fill="none" stroke="var(--ink)" strokeWidth="1" /> : null}
                     <circle className="hit" cx={cx} cy={cy} r="5" fill={final === 'confirmed' ? 'var(--ink)' : 'var(--surface)'} stroke="var(--ink)" strokeWidth="1" strokeDasharray={r.metrics || r.failed ? undefined : '2 2'} />
                     {final === 'rejected' ? <path d={`M${cx - 3} ${cy - 3} l6 6 m0 -6 l-6 6`} stroke="var(--rejected)" strokeWidth="1.4" /> : null}

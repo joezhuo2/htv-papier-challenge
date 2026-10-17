@@ -261,3 +261,8 @@ ul.plain { margin: 0; padding-left: 16px; }
 .informed { display: flex; flex-direction: column; align-items: flex-start; gap: 0; text-align: left; font-size: 12px; padding: 4px 8px; max-width: 100%; }
 .informed .oneline { max-width: 100%; }
 @media (prefers-reduced-motion: reduce) { .flash { animation: none; } }
+@keyframes working { 0%, 100% { background-color: var(--surface); } 50% { background-color: var(--hover); } }
+.card.working { border-style: dashed; animation: working 2.4s ease-in-out infinite; }
+.working-line { animation: pulse 1.6s ease-in-out infinite; }
+svg .working { animation: pulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .card.working, .working-line, svg .working { animation: none; } }
