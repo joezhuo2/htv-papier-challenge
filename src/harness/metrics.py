@@ -18,6 +18,9 @@ class Metrics:
     max_abs_out: float | None = None
     errors: dict[str, float] = field(default_factory=dict)
     abs_errors: dict[str, float] = field(default_factory=dict)
+    speedups: dict[str, float] = field(default_factory=dict)  # vs references timed in the same window: naive, eager, parent
+    spreads: dict[str, float] = field(default_factory=dict)  # relative half-range of the per-round ratios
+    ref_ms: dict[str, float] = field(default_factory=dict)
     target: str = "triton"
     params: dict | None = None
     error: str | None = None
@@ -35,7 +38,8 @@ class Metrics:
         return asdict(self)
 
     def contract(self):
-        return {k: getattr(self, k) for k in CONTRACT}
+        d = {k: getattr(self, k) for k in CONTRACT}
+        return d | ({"speedups": self.speedups, "spreads": self.spreads} if self.speedups else {})
 
 
 def tflops(M, N, K, latency_ms):

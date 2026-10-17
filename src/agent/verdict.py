@@ -29,8 +29,9 @@ def sci(x):
     return f"{x:.1e}".replace("e-0", "e-").replace("e+0", "e")
 
 
-def judge(prediction: dict, m: Metrics, base_ms: float | None, band: float, bound: float, adv_bound: float | None, strict=BOUND) -> Judgment:
-    """prediction is {min_speedup, vs, max_error}. base_ms is the latency the speedup is measured against.
+def judge(prediction: dict, m: Metrics, speedup: float | None, noise: float, bound: float, adv_bound: float | None, strict=BOUND) -> Judgment:
+    """prediction is {min_speedup, vs, max_error}. speedup is measured against the reference timed in the same window as the run,
+    and noise is the relative band around the threshold (the larger of the calibrated band and this run's measured spread).
     bound is the standard batch bound set by the branch's lens (the Speed lens tolerates more than the strict 1e-3).
     adv_bound is the adversarial bound from an active Precision directive, or None when no lens gates it yet."""
     if not m.compiled_ok or m.latency_ms is None:
@@ -38,12 +39,11 @@ def judge(prediction: dict, m: Metrics, base_ms: float | None, band: float, boun
         return Judgment("rejected", False, f"The run failed: {why[:200]}", [Check("compiles and runs", "yes", "no", False)])
 
     checks = []
-    if base_ms:
-        speedup, target = base_ms / m.latency_ms, prediction["min_speedup"]
+    if speedup:
+        target = prediction["min_speedup"]
         vs = "naive" if prediction["vs"] == "naive" else "best"
-        passed = True if speedup >= target * (1 + band) else False if speedup < target * (1 - band) else None
-        observed = f"{speedup:.2f}x" + (f" (noise +/- {target * band:.2f}x)" if passed is None else "")
-        checks.append(Check(f"speedup vs {vs}", f">= {target:.2f}x", observed, passed))
+        passed = True if speedup >= target * (1 + noise) else False if speedup < target * (1 - noise) else None
+        checks.append(Check(f"speedup vs {vs}", f">= {target:.2f}x", f"{speedup:.2f}x (noise +/- {speedup * noise:.2f}x)", passed))
 
     checks.append(Check("standard max error", f"< {sci(bound)}", sci(m.max_error), m.max_error < bound))
     if adv_bound is not None:
