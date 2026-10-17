@@ -24,12 +24,13 @@ from harness.runner import TIMEOUT_S
 
 SWEEP_KS = [256, 512, 1024, 2048, 4096]
 LENS_IDS = {"speed": "speed", "precision": "prec"}
-QUERIES = {"both": "Triton matrix multiplication tiling warps pipeline stages", "speed": "FP16 accumulation throughput tensor cores",
-           "precision": "accumulation numerical error precision bound"}
+# Papiers queries name the change under test, the lens topic is the fallback before a proposal exists
+FACETS = [(("acc",), "accumulation precision FP16"), (("gelu",), "GELU tanh approximation"), (TILE_KEYS := ("block_m", "block_n", "block_k", "warps", "stages"), "tile size shared memory")]
+QUERIES = {"both": "tile size shared memory", "speed": "accumulation precision FP16", "precision": "accumulation error grows with length"}
 MAX_PER_LENS = 3
 DIRECTIVE_GAP_S = 10.0
 MAX_DIRECTIVES = 6
-TILE = ("block_m", "block_n", "block_k", "warps", "stages")
+TILE = TILE_KEYS
 # FP32 accumulator elements per thread that still leave registers for the operands (255 per thread). FP16 packs two per register.
 ACC_LIMIT = {"fp32": 128, "fp16": 256}
 SLOW = 0.5  # a run below this speedup vs its parent gets a register post-mortem
@@ -84,6 +85,16 @@ def bound_owner(bound):
 
 def params_text(p: Params):
     return f"{p.block_m}x{p.block_n}x{p.block_k} tiles, {p.warps} warps, {p.stages} stages, {p.acc} accumulation, {p.gelu} GELU"
+
+
+def facet(a: Params, b: Params):
+    """The Papiers query for the change from a to b: precision first, then the GELU formula, then tiling. None when nothing changed."""
+    keys = {k for k in a.dict() if getattr(a, k) != getattr(b, k)}
+    return next((q for ks, q in FACETS if keys & set(ks)), None)
+
+
+def cite_text(n):
+    return f"Context from Papiers {n.get('kind') or 'note'} {n['id']}"
 
 
 def claim_text(start: Params, p: Params, pred, bound):
@@ -207,6 +218,7 @@ class Orchestrator:
         self.runs = 0
         self.context = context
         self.read: dict[str, list] = {}
+        self.prompted: dict[str, list] = {}  # branch -> Papiers items the last prompt was given
         self.help_deadline_s = help_deadline_s
         self.max_hyps, self.retry_s = max_hyps, retry_s
         self.headroom = headroom
@@ -487,6 +499,8 @@ class Orchestrator:
             if b.status in ("running", "waiting_on_human"):
                 continue
             del self.hints[bid]
+            if hint[3] is None:
+                continue  # a bound applies to every branch of its lens anyway, nothing was left untested
             others = [x for x in self.branches.values() if x.lens == b.lens and x.status in ("running", "waiting_on_human")]
             if others:
                 self.hints[others[-1].id] = hint
@@ -571,6 +585,10 @@ class Orchestrator:
         if not h:
             self.close(b, "done")
             return
+        self.cite(h, self.start_point(b.id)[0])
+        if b.id in self.defaulted:
+            flag = "flagged: default continuation, no lens directive arrived"
+            h.note = f"{h.note} ({flag})" if h.note else flag.capitalize()
         self.hyps.append(h)
         self.log.emit("hypothesis_proposed", hypothesis=h.dict())
         best = self.best_run(b.id)
@@ -843,7 +861,9 @@ class Orchestrator:
         tried = [{"params": h.params.dict(), "verdict": h.judgment.verdict, "metrics": h.metrics.contract()}
                  for h in self.hyps if h.branch == b.id and h.judgment and h.metrics.latency_ms]
         directives = [d for d in self.directives if b.lens in ("both", d["lens"])]
-        notes = self.papiers(b, directives)
+        planned = facet(start, replace(start, **{k: v for k, v in hint[3].items() if k in start.dict()})) if hint and hint[3] else None
+        notes = self.papiers(planned or QUERIES[b.lens])
+        self.prompted[b.id] = notes
         messages = hyp.prompt(b.dict(), directives, {"params": start.dict(), "metrics": metrics.contract()}, tried, self.avoid,
                               ([f"Suggestion from a human lens owner, test this next: {hint[0]}"] if hint and hint[3] is not None else [])
                               + [f"Papiers {n['id']} ({n['title']}): {n['excerpt']}" for n in notes], self.bounds(b.lens)["standard"], self.headroom)
@@ -858,7 +878,7 @@ class Orchestrator:
             if h and json.dumps(h["params"].dict(), sort_keys=True) in tried_all:
                 h, why = None, "that configuration was already tried"
             if h:
-                cite = hint[1] if hint else f"Context from Papiers note {notes[0]['id']}" if notes else None
+                cite = hint[1] if hint else None
                 claim = h["claim"]
                 if h["adjusted"]:
                     claim = claim_text(start, h["params"], h["prediction"], self.bounds(b.lens))
@@ -992,23 +1012,32 @@ class Orchestrator:
         h.base = x["base"]
         return h
 
-    def papiers(self, b, directives):
-        """Reads Papiers for this branch's topic once per query and logs each read: one event per returned item, or one without a note when the search came back empty."""
-        if not self.context:
+    def papiers(self, query):
+        """Reads Papiers once per query and logs each read: one event per returned item, or one without a note when nothing matched.
+        The lock is released while the CLI runs, so commands still apply."""
+        if not self.context or not query:
             return []
-        query = next((d["text"] for d in reversed(directives) if d["lens"] == b.lens), None) or QUERIES[b.lens]
         if query not in self.read:
             try:
-                self.read[query] = [n | {"excerpt": re.sub(r"\s*\[\[src:[^\]]*\]\]", "", n["excerpt"])[:400]} for n in self.context(query)[:2]]
+                with self.released():
+                    got = self.context(query)
             except Exception as e:  # noqa: BLE001, Papiers is optional context, the loop runs without it
                 self.read[query] = []
                 self.log.emit("agent_log", text=f"Papiers search unavailable ({type(e).__name__}), continuing without reading context.")
                 return []
+            self.read[query] = [n | {"excerpt": re.sub(r"\s*\[\[src:[^\]]*\]\]", "", n["excerpt"])[:400]} for n in got[:2]]
             if not self.read[query]:
                 self.log.emit("papiers_context", query=query)
             for n in self.read[query]:
-                self.log.emit("papiers_context", query=query, note={"id": n["id"], "title": n["title"], "excerpt": n["excerpt"]})
+                self.log.emit("papiers_context", query=query, note={k: v for k, v in n.items() if v is not None})
         return self.read[query]
+
+    def cite(self, h: Hyp, start: Params):
+        """Before the run: reads Papiers for the change this hypothesis makes and cites the top item in its note, or the context the
+        prompt was given when the change query finds nothing. Only what was retrieved is cited."""
+        found = self.papiers(facet(h.base or start, h.params)) or (self.prompted.pop(h.branch, None) or [])
+        if found:
+            h.note = f"{h.note}. {cite_text(found[0])}" if h.note else cite_text(found[0])
 
     def ask_or_wait(self, messages, tag, branch):
         """Calls the fast model. On a timeout or API error the session shows it and waits for a retry command, or retries by
@@ -1030,9 +1059,6 @@ class Orchestrator:
     def new_hyp(self, b, claim, prediction, params, note):
         # the error bound in the prediction is the lens bound, the agent cannot loosen it
         bound = self.bounds(b.lens)
-        if b.id in self.defaulted:
-            flag = "flagged: default continuation, no lens directive arrived"
-            note = f"{note} ({flag})" if note else flag.capitalize()
         return Hyp(f"H{len(self.hyps)}", b.id, claim, prediction | {"max_error": bound["standard"], "bound": bound}, params, note)
 
     def measure(self, h: Hyp, parent: Params | None):
@@ -1101,11 +1127,13 @@ class Orchestrator:
         expected = f"Speedup of at least {p['min_speedup']:.2f}x vs {'naive' if p['vs'] == 'naive' else 'the best so far'} with max error under {sci(p['max_error'])}."
         base = self.start_point(h.branch)[0]
         if m.latency_ms is None:
+            found = self.papiers("tile size shared memory" if "shared memory" in (m.error or "") else facet(base, h.params))
             pm = {"hypothesis": h.id, "expected": expected, "observed": f"The run failed: {(m.error or 'no measurement').strip().splitlines()[-1][:200]}",
                   "sweep": []} | failure_cause(h.params, m)
         elif h.ref == "parent" and h.speedup < SLOW and m.max_error < h.prediction["max_error"]:
             pp = h.base or self.best_run(h.branch).params
             parent = next((x.metrics for x in self.hyps if x.params == pp and x.metrics and x.metrics.latency_ms), None)
+            found = self.papiers("register pressure spills")
             pm = {"hypothesis": h.id, "expected": expected, "sweep": [],
                   "observed": f"{m.latency_ms:.3f} ms against {m.ref_ms['parent']:.3f} ms for the parent in the same window, {h.speedup:.2f}x (+/- {h.speedup * h.noise:.2f}x)."} \
                 | register_cause(h.params, m, h.speedup, parent)
@@ -1115,13 +1143,20 @@ class Orchestrator:
             sweep = [{"k": k, "adv_error": s.errors[f"k{k}"]} for k in SWEEP_KS if f"k{k}" in s.errors]
             trend = (f"Adversarial error goes from {sci(sweep[0]['adv_error'])} at K={sweep[0]['k']} to {sci(sweep[-1]['adv_error'])} at K={sweep[-1]['k']}"
                      f"{f', above the strict {sci(BOUND)} bound at every K' if all(x['adv_error'] >= BOUND for x in sweep) else ''}." if sweep else "")
+            # the query names the measured cause: an error that grows with K is an accumulation length effect
+            rising = len(sweep) > 1 and sweep[-1]["adv_error"] > sweep[0]["adv_error"]
+            found = self.papiers("accumulation error grows with length" if rising else facet(base, h.params))
+            context = "".join(f"\nThe user's Papiers {n.get('kind') or 'note'} {n['id']} from \"{n.get('document_title') or n['title']}\": {n['excerpt'][:300]}"
+                              + (f" (their note: {n['annotation']})" if n.get("annotation") else "") for n in found)
             fallback = {"cause": f"{h.judgment.reason} {trend}".strip(),
                         "pivot": f"Drop {ruled_out(h.params, base)}, keep the other parameters, and test whether the gain survives."}
             prose = self.ask_json([{"role": "system", "content": "You write terse, factual post-mortems for GPU kernel experiments. Use only the numbers given. Reply with only JSON: {\"cause\": \"<two sentences on the mechanism>\", \"pivot\": \"<one sentence on what to try next>\"}"},
                                    {"role": "user", "content": f"Error metric: max |y - ref| / max(|ref|, 1) against an FP32 reference. The strict bound is {sci(BOUND)}, the Speed lens tolerates {sci(hyp.SPEED_TOLERANCE)} on the standard batch only.\nHypothesis {h.id}: {h.claim}\nChange: {change(base, h.params)}\nExpected: {expected}\nObserved: {observed}\n"
-                                                               f"Verdict reason: {h.judgment.reason}\nError vs K sweep on adversarial magnitudes: {json.dumps(sweep)}"}],
+                                                               f"Verdict reason: {h.judgment.reason}\nError vs K sweep on adversarial magnitudes: {json.dumps(sweep)}{context}"}],
                                   self.strong, f"pm-{h.id}", ("cause", "pivot")) or fallback
             pm = {"hypothesis": h.id, "expected": expected, "observed": observed, "cause": prose["cause"], "pivot": prose["pivot"], "sweep": sweep}
+        if found:
+            pm["note"] = found[0]["id"]
         self.avoid.append(f"{ruled_out(h.params, base)} ({h.id} rejected: {h.judgment.reason})")
         self.pms[h.id] = pm
         self.log.emit("post_mortem", post_mortem=pm)

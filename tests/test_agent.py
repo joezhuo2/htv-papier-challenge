@@ -125,7 +125,9 @@ def assert_contract(events):
         if e["type"] == "findings_exported":
             assert all(set(i) == {"kind", "title", "file"} and i["file"].startswith("exports/") for i in e["items"])
         if e["type"] == "post_mortem":
-            assert set(e["post_mortem"]) == {"hypothesis", "expected", "observed", "cause", "pivot", "sweep"}
+            assert set(e["post_mortem"]) - {"note"} == {"hypothesis", "expected", "observed", "cause", "pivot", "sweep"}
+        if e["type"] == "papiers_context" and "note" in e:
+            assert {"id", "title", "excerpt"} <= set(e["note"]) <= {"id", "title", "excerpt", "kind", "document_title", "highlight_text", "annotation"}
 
 
 # ---- verdicts ----
@@ -400,7 +402,7 @@ def test_papiers_context_is_read_once_cited_and_prompted(tmp_path):
     notes = of(o, "papiers_context")
     assert notes == [{**notes[0], "query": QUERIES["both"], "note": {"id": "cnv_1", "title": "Triton tutorial", "excerpt": "Accumulate in FP32 for accuracy."}}]
     assert len(queries) == 1
-    assert of(o, "hypothesis_proposed")[0]["hypothesis"]["note"] == "Context from Papiers note cnv_1"
+    assert of(o, "hypothesis_proposed")[0]["hypothesis"]["note"] == "Context from Papiers note cnv_1"  # old-shape items have no kind
     assert "Papiers cnv_1 (Triton tutorial): Accumulate in FP32 for accuracy." in o.ask.calls[0][2][1]["content"]
     assert_contract_papiers(o.log.events)
 
@@ -1037,3 +1039,103 @@ def test_the_waiting_line_is_logged_once_and_explanation_fallbacks_stay_out_of_t
     logs = [e["text"] for e in of(o, "agent_log")]
     assert sum(t.startswith("Waiting for a lens directive") for t in logs) == 1
     assert not any(t.startswith("Explanation model unavailable") for t in logs)
+
+
+
+# ---- Papiers retrieval through the CLI, mocked ----
+
+HL_SEARCH = {"results": [{"kind": "document", "id": "doc_mp", "title": "MIXED PRECISION TRAINING", "evidence": [
+    {"kind": "highlight", "id": "hl_mp1", "snippet": "FP16 vector dot-product accumulates the partial products into an FP32 value"}]}]}
+HL_READ = {"items": [{"id": "hl_mp1", "kind": "highlight", "ok": True, "content": "Some networks require that FP16 vector dot-product accumulates into FP32.",
+                      "metadata": {"documentTitle": "MIXED PRECISION TRAINING", "annotationText": "This is why our FP16 accumulator fails at large K."}}]}
+NOTE_SEARCH = {"results": [{"kind": "note", "id": "nte_1", "title": "Tiling plan", "snippet": "Keep the accumulator under 128 per thread."}]}
+EMPTY = {"results": [], "quality": {"signal": "empty"}}
+
+
+class CLI:
+    """Answers papiers argument lists from a table keyed on (command, kind), records every call."""
+
+    def __init__(self, table, fail=None):
+        self.table, self.fail, self.calls = table, fail, []
+
+    def __call__(self, args):
+        self.calls.append(args)
+        if self.fail:
+            raise self.fail
+        kind = args[args.index("--kind") + 1] if "--kind" in args else None
+        key = (args[0], kind, "annotated" if any("annotated" in a for a in args) else None)
+        return self.table.get(key) or self.table.get((args[0], kind, None)) or self.table.get((args[0], None, None)) or {"results": [], "items": []}
+
+
+def test_retrieval_puts_annotated_highlights_first_with_the_document_title_and_the_users_words():
+    from agent.papiers import Library
+    cli = CLI({("search", "highlight", None): HL_SEARCH, ("search", "note", None): NOTE_SEARCH, ("read", None, None): HL_READ})
+    got = Library(cli).retrieve("accumulation precision FP16")
+    assert got[0] == {"id": "hl_mp1", "kind": "highlight", "document_title": "MIXED PRECISION TRAINING", "title": "MIXED PRECISION TRAINING",
+                      "excerpt": "Some networks require that FP16 vector dot-product accumulates into FP32.",
+                      "highlight_text": "Some networks require that FP16 vector dot-product accumulates into FP32.",
+                      "annotation": "This is why our FP16 accumulator fails at large K."}
+    assert got[1]["kind"] == "note" and got[1]["id"] == "nte_1" and "annotation" not in got[1]
+    assert not any(c[0] == "search" and "passage" in c for c in cli.calls)  # judgement found, no fallback
+
+
+def test_a_note_outranks_an_unannotated_highlight():
+    from agent.papiers import Library
+    cli = CLI({("search", "highlight", None): HL_SEARCH, ("search", "note", None): NOTE_SEARCH,
+               ("read", None, None): {"items": [HL_READ["items"][0] | {"metadata": {"annotationText": None}}]}})
+    assert [x["id"] for x in Library(cli).retrieve("accumulation")] == ["nte_1", "hl_mp1"]
+
+
+def test_retrieval_falls_back_to_listed_marks_then_annotated_passages_then_passages_then_conversations():
+    from agent.papiers import Library
+    listed = {"items": [{"id": "hl_x", "kind": "highlight", "preview": "accumulation length breakdown region", "metadata": {"documentTitle": "Bit-width"}}]}
+    cli = CLI({("list", "highlight", None): listed, ("read", None, None): {"items": []}})
+    assert [x["id"] for x in Library(cli).retrieve("accumulation error grows with length")] == ["hl_x"]
+    passage = {"results": [{"kind": "document", "id": "doc_t", "title": "Triton", "evidence": [{"kind": "passage", "id": "pas_1", "snippet": "tiles"}]}]}
+    cli = CLI({("search", "passage", None): passage})
+    got = Library(cli).retrieve("tile size shared memory")
+    assert got == [{"id": "pas_1", "kind": "passage", "document_title": "Triton", "title": "Triton", "excerpt": "tiles"}]
+    assert ["search", "tile size shared memory", "--kind", "passage", "--filter", "annotated.eq=true", "--limit", "2"] in cli.calls
+    convo = {"results": [{"kind": "conversation", "id": "cnv_9", "title": "Chat", "snippet": "about tiles"}]}
+    assert Library(CLI({("search", "conversation", None): convo})).retrieve("tiles")[0]["kind"] == "conversation"
+
+
+def test_an_empty_library_returns_nothing_and_the_hypothesis_cites_nothing(tmp_path):
+    from agent.papiers import Library
+    assert Library(CLI({})).retrieve("tile size shared memory") == []
+    o = make(tmp_path, Asker(h(P, 2.0, "naive")), main_iters=1, context=Library(CLI({})).retrieve)
+    o.run()
+    assert [(e["query"], "note" in e) for e in of(o, "papiers_context")] == [("tile size shared memory", False)]
+    assert of(o, "hypothesis_proposed")[0]["hypothesis"].get("note") is None
+
+
+def test_a_cli_error_is_logged_and_the_loop_continues(tmp_path):
+    import subprocess
+    from agent.papiers import Library
+    o = make(tmp_path, Asker(h(P, 2.0, "naive")), main_iters=1, context=Library(CLI({}, fail=subprocess.CalledProcessError(1, "papiers"))).retrieve)
+    o.run()
+    assert any("Papiers search unavailable (CalledProcessError)" in e["text"] for e in of(o, "agent_log"))
+    assert of(o, "verdict")[0]["verdict"] == "confirmed"
+
+
+def test_the_fp16_hypothesis_and_its_post_mortem_cite_what_was_retrieved(tmp_path):
+    from agent.papiers import Library
+    cli = CLI({("search", "highlight", None): HL_SEARCH, ("read", None, None): HL_READ})
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), default="no json"), main_iters=1, branch_iters=1, context=Library(cli).retrieve)
+    run_with(o, [(1, "speed", "Push throughput harder."), (2, "precision", "Max error under 1e-3 on both batches.")])
+    seed = of(o, "hypothesis_proposed")[1]["hypothesis"]
+    assert seed["params"]["acc"] == "fp16" and seed["note"].endswith("Context from Papiers highlight hl_mp1")
+    reads = [e for e in of(o, "papiers_context") if e.get("note")]
+    assert {e["query"] for e in reads} >= {"accumulation precision FP16", "accumulation error grows with length"}
+    assert reads[0]["note"]["annotation"] == "This is why our FP16 accumulator fails at large K."
+    pm = of(o, "post_mortem")[0]["post_mortem"]
+    assert pm["hypothesis"] == seed["id"] and pm["note"] == "hl_mp1"
+    queries = {c[1] for c in cli.calls if c[0] == "search"}
+    assert "Push throughput harder." not in queries  # queries name the change or the cause, not the directive text
+    assert_contract(o.log.events)
+
+
+def test_counts_for_the_preflight():
+    from agent.papiers import Library
+    cli = CLI({("list", "highlight", None): {"items": [{"id": "hl_1"}] * 50, "page": {"nextCursor": "c"}}, ("list", "document", None): {"items": [{"id": "doc_1"}] * 6}})
+    assert Library(cli).counts() == {"highlight": "50+", "note": 0, "document": 6}
