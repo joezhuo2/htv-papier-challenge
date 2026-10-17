@@ -54,6 +54,7 @@ class Branch:
     misses: int = 0
     fails: int = 0  # consecutive runs that failed to compile or run
     budget: int | None = None  # iterations, when not the main or branch default (a hybrid runs once)
+    pivot: Params | None = None  # for a pivot branch, the rejected config with what its post-mortem ruled out dropped
 
     def dict(self):
         return {"id": self.id, "parents": self.parents, "label": self.label, "lens": self.lens, "status": self.status}
@@ -139,9 +140,13 @@ def setting(p: Params, k):
     return f"{v.upper()} accumulation" if k == "acc" else f"{v} GELU" if k == "gelu" else f"{k} {v}"
 
 
+def pivot_keys(p: Params, base: Params):
+    """What a post-mortem rules out: the precision or GELU change when there is one, otherwise every changed parameter."""
+    return [k for k in p.dict() if getattr(p, k) != getattr(base, k) and k in ("acc", "gelu")] or [k for k in p.dict() if getattr(p, k) != getattr(base, k)]
+
+
 def ruled_out(p: Params, base: Params):
-    keys = [k for k in p.dict() if getattr(p, k) != getattr(base, k) and k in ("acc", "gelu")] or [k for k in p.dict() if getattr(p, k) != getattr(base, k)]
-    return ", ".join(setting(p, k) for k in keys) or f"the configuration {params_text(p)}"
+    return ", ".join(setting(p, k) for k in pivot_keys(p, base)) or f"the configuration {params_text(p)}"
 
 
 def failure_cause(p: Params, m: Metrics):
@@ -734,8 +739,11 @@ class Orchestrator:
         b = self.branches[h.branch]
         if b.lens == "both" or sum(x.lens == b.lens for x in self.branches.values()) >= MAX_PER_LENS:
             return
-        self.fork(b.id, b.lens, f"{'Speed' if b.lens == 'speed' else 'Precision'} lens, pivot from {h.id}",
-                  f"Pivot from the {h.id} post-mortem: drop {ruled_out(h.params, self.start_point(b.id)[0])} and keep the rest.")
+        base = self.start_point(b.id)[0]
+        dropped = pivot_keys(h.params, base)
+        new = self.fork(b.id, b.lens, f"{'Speed' if b.lens == 'speed' else 'Precision'} lens, pivot from {h.id}",
+                        f"Pivot from the {h.id} post-mortem: drop {ruled_out(h.params, base)} and keep the rest.")
+        new.pivot = replace(h.params, **{k: getattr(base, k) for k in dropped})
 
     def next_branch(self):
         if self.capped() or self.stopped:
@@ -1078,6 +1086,8 @@ class Orchestrator:
         notes = self.papiers(planned or QUERIES[b.lens])
         messages = hyp.prompt(b.dict(), directives, {"params": start.dict(), "metrics": metrics.contract()}, self.ledger(), self.avoid,
                               ([f"Suggestion from a human lens owner, test this next: {hint.text}"] if hint and hint.delta is not None else [])
+                              + ([f"This branch pivots to {params_text(b.pivot)}. Keep those parameters unless your claim names every one you change."]
+                                 if b.pivot else [])
                               + [f"Papiers {n['id']} ({n['title']}): {n['excerpt']}" for n in notes], self.bounds(b.lens)["standard"], self.headroom)
         why, first = "", ""
         for attempt in range(3):
@@ -1101,6 +1111,9 @@ class Orchestrator:
                     claim = claim_text(start, h["params"], h["prediction"], self.bounds(b.lens)) + (f" Revisits {', '.join(cited)}." if cited else "")
                     fix = h["adjusted"] or f"Claim rebuilt from the final params, the model's text named {', '.join(wrong)}"
                     cite = f"{cite}. {fix}" if cite else fix
+                if b.pivot and any(not hyp.named(claim, k, getattr(h["params"], k)) for k in h["params"].dict()
+                                   if getattr(h["params"], k) != getattr(b.pivot, k)):
+                    claim += f" Relative to the pivot config ({params_text(b.pivot)}) it changes {change(b.pivot, h['params'])}."
                 new = self.new_hyp(b, claim, h["prediction"], h["params"], cite)
                 self.spend(new, hint)
                 if hint and hint.delta is not None:

@@ -106,6 +106,21 @@ KNOB_RE = {
 }
 
 
+def named(claim, k, v):
+    """Whether a claim names this parameter value."""
+    t = claim.lower()
+    if k == "acc":
+        return v in t
+    if k == "gelu":
+        return bool(re.search(r"approx|tanh" if v == "approx" else r"exact|erf", t))
+    if k.startswith("block_"):
+        slot = "mnk".index(k[-1])
+        tiles = [[int(g) for g in m.groups() if g] for m in re.finditer(r"\b(\d+)\s*x\s*(\d+)(?:\s*x\s*(\d+))?\b", t)]
+        if any(len(d) > slot and d[slot] == v for d in tiles):
+            return True
+    return any(int(next(g for g in m.groups() if g)) == v for m in KNOB_RE[k].finditer(t))
+
+
 def mismatches(claim, p):
     """Tile sizes, warps and stages a claim names that differ from the params that will run, as the quoted phrases."""
     t = claim.lower()

@@ -1545,3 +1545,21 @@ def test_a_hunch_is_a_retest_only_if_the_earlier_run_changed_no_other_knob(tmp_p
     assert o.tested({"gelu": "approx"}) is None and o.hints["prec"].params is None  # a first test goes to the model
     o.hyps[2].params = Params(128, 128, 64, 4, 4, gelu="approx")
     assert o.tested({"gelu": "approx"}) is o.hyps[2]
+
+
+def test_claim_naming_helper():
+    assert hyp.named("Use 256x128x64 tiles", "block_m", 256) and hyp.named("Use 256x128x64 tiles", "block_k", 64)
+    assert not hyp.named("Use 256x128 tiles", "block_k", 64) and hyp.named("go to 8 warps", "warps", 8) and hyp.named("the tanh GELU", "gelu", "approx")
+    assert not hyp.named("FP32 accumulation", "acc", "fp16")
+
+
+def test_a_pivot_claim_states_every_change_from_the_pivot_config(tmp_path):
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.02), h(P | {"warps": 8, "stages": 4}, 1.02, claim="Going to 8 warps should help."),
+                             default="no json"), main_iters=1, branch_iters=1)
+    run_with(o, [(1, "speed", "Faster."), (2, "precision", "Max error under 1e-3 on both batches.")])
+    assert o.branches["speed2"].pivot.dict() == P
+    h2 = next(e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["hypothesis"]["branch"] == "speed2")
+    assert h2["claim"] == ("Going to 8 warps should help. Relative to the pivot config (128x128x32 tiles, 4 warps, 3 stages, FP32 accumulation, exact GELU) "
+                           "it changes warps 4 to 8, stages 3 to 4.")
+    prompt = next(m for _, tag, m in o.ask.calls if tag.startswith("speed2-"))[1]["content"]
+    assert "This branch pivots to 128x128x32 tiles, 4 warps, 3 stages, FP32 accumulation, exact GELU." in prompt
