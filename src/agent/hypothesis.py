@@ -29,7 +29,14 @@ def brief(m):
     return {k: r3(v) for k, v in m.items()}
 
 
-def prompt(branch, directives, start, tried, avoid, notes=(), bound=1e-3):
+def headroom_line(h):
+    n, e = h["vs_naive"], h["vs_eager"]
+    return (f"Measured headroom on this GPU: the best configuration from a tile, warps and stages sweep (FP32 accumulation, exact GELU) is "
+            f"{n['median']:.2f}x faster than the naive start ({n['min']:.2f} to {n['max']:.2f} over {h['n']} runs) and {e['median']:.2f}x vs PyTorch eager "
+            f"({e['min']:.2f} to {e['max']:.2f}). Keep predictions physically plausible against this.")
+
+
+def prompt(branch, directives, start, tried, avoid, notes=(), bound=1e-3, headroom=None):
     lines = [
         f"Branch: {branch['id']} ({branch['label']}).",
         f"Error bound on this branch, set by its lens: max_error under {bound:.0e} on the standard batch. Use it as prediction.max_error.",
@@ -37,6 +44,8 @@ def prompt(branch, directives, start, tried, avoid, notes=(), bound=1e-3):
         "Directives: " + ("; ".join(f"{d['lens']} lens: {d['text']}" for d in directives) or "none yet, improve throughput while keeping max_error under 1e-3 on the standard batch."),
         "Already tried: " + (json.dumps([{"params": t["params"], "verdict": t["verdict"], **brief(t["metrics"])} for t in tried]) if tried else "nothing on this branch"),
     ]
+    if headroom:
+        lines.append(headroom_line(headroom))
     if avoid:
         lines.append("Ruled out by earlier post-mortems, do not repeat: " + "; ".join(avoid))
     lines += [f"Context note: {n}" for n in notes]

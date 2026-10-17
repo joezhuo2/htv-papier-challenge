@@ -658,3 +658,32 @@ def test_preflight_reports_each_check_and_start_command_starts_the_session(tmp_p
             ws.send_text(json.dumps({"type": "start"}))
             assert json.loads(ws.receive_text())["type"] == "agent_log"
         assert client.get("/health").json()["started"] is True
+
+
+def test_record_start_lifts_the_live_cap_and_saves_the_log_as_a_replay(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from server.app import create
+
+    monkeypatch.setenv("RECORD_HYPS", "3")
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"stages": 4}, 1.05), h(P | {"warps": 8}, 1.3), h(P | {"gelu": "approx"}, 1.3)),
+             main_iters=4, max_hyps=1, idle_s=5)
+    with TestClient(create(lambda: o, checks={}, autostart=False)) as client:
+        assert client.get("/preflight").json()["cap"] == 1
+        with client.websocket_connect("/ws") as ws:
+            ws.send_text(json.dumps({"type": "start", "record": True}))
+            assert "Recording mode" in json.loads(ws.receive_text())["text"]
+        deadline = time.time() + 10
+        while "session_finished" not in types(o) and time.time() < deadline:
+            time.sleep(0.02)
+    assert len(of(o, "hypothesis_proposed")) == 3
+    assert "?mode=replay&file=/runs/sessions/test/events.jsonl" in of(o, "agent_log")[-1]["text"]
+    assert types(o)[-1] == "session_finished"
+
+
+def test_prompt_quotes_the_measured_headroom():
+    from harness import noise
+
+    hr = noise.headroom()
+    text = hyp.prompt({"id": "main", "label": "Baseline"}, [], {"params": P, "metrics": {}}, [], [], headroom=hr)[1]["content"]
+    assert f"{hr['vs_naive']['median']:.2f}x faster than the naive start" in text and f"{hr['vs_eager']['median']:.2f}x vs PyTorch eager" in text

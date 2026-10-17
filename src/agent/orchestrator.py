@@ -76,10 +76,11 @@ def ruled_out(p: Params, base: Params):
 class Orchestrator:
     """engine(spec, run_id) -> Metrics runs one experiment (harness.runner.run in production).
     ask(messages, model, tag) -> str is the LLM. fast and strong are model ids.
-    context(query) -> [{id, title, excerpt}] reads Papiers, optional."""
+    context(query) -> [{id, title, excerpt}] reads Papiers, optional. headroom is harness.noise.headroom(), quoted in the prompt.
+    record marks a recording session: uncapped by the live demo cap, it saves its log as a replay."""
 
     def __init__(self, engine, ask, log: Log, session: str, fast: str, strong: str, band: float,
-                 main_iters=2, branch_iters=3, idle_s=120.0, context=None, help_deadline_s=45.0, max_hyps=None, retry_s=30.0):
+                 main_iters=2, branch_iters=3, idle_s=120.0, context=None, help_deadline_s=45.0, max_hyps=None, retry_s=30.0, headroom=None):
         self.engine, self.ask, self.log, self.session = engine, ask, log, session
         self.fast, self.strong, self.band = fast, strong, band
         self.main_iters, self.branch_iters, self.idle_s = main_iters, branch_iters, idle_s
@@ -94,6 +95,8 @@ class Orchestrator:
         self.read: dict[str, list] = {}
         self.help_deadline_s = help_deadline_s
         self.max_hyps, self.retry_s = max_hyps, retry_s
+        self.headroom = headroom
+        self.record = False
         self.retry = threading.Event()
         self.helps: dict[str, dict] = {}  # id -> {help, branch, t, answered, expired}
         self.hints: dict[str, tuple[str, str]] = {}  # branch -> (suggestion, note for the hypothesis)
@@ -154,6 +157,8 @@ class Orchestrator:
             self.export([("ledger", f"Hypothesis ledger {self.hyps[0].id} to {self.hyps[-1].id}", "ledger.md",
                           ex.ledger_md(self.hyps, out if best else None, self.naive.latency_ms, self.eager.latency_ms))]
                         + [("summary", f"Branch summary: {bid}", f"summary-{bid}.md", ex.summary_md(sm)) for bid, sm in self.summaries.items()])
+        if self.record:
+            self.log.emit("agent_log", text=f"Recording saved as a replay: open ?mode=replay&file=/runs/{self.session}/events.jsonl")
         self.log.emit("session_finished", ledger=ledger, best=out)
 
     # ---- commands ----
@@ -445,7 +450,7 @@ class Orchestrator:
         notes = self.papiers(b, directives)
         messages = hyp.prompt(b.dict(), directives, {"params": start.dict(), "metrics": metrics.contract()}, tried, self.avoid,
                               ([f"Suggestion from a human lens owner, test this next: {hint[0]}"] if hint else [])
-                              + [f"Papiers {n['id']} ({n['title']}): {n['excerpt']}" for n in notes], self.bounds(b.lens)["standard"])
+                              + [f"Papiers {n['id']} ({n['title']}): {n['excerpt']}" for n in notes], self.bounds(b.lens)["standard"], self.headroom)
         why = ""
         for attempt in range(3):
             text = self.ask_or_wait(messages, f"{b.id}-{b.iters}-{attempt}", b.id)

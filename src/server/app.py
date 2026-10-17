@@ -1,7 +1,9 @@
 """uv run uvicorn server.app:app --port 8000
 
 One research session per server process. The session waits for a start command from the UI (or starts at once with AUTOSTART=1)
-and then runs the orchestrator in a background thread. Each WebSocket client first gets the session history as one array, then
+and then runs the orchestrator in a background thread. The default start keeps the table demo cap (MAX_HYPS, default 1). A start
+with record: true is the recording mode: the full loop for up to RECORD_HYPS hypotheses (default 8) or until Stop, with the log
+saved as a replay. Each WebSocket client first gets the session history as one array, then
 every new event, and may send Command objects. GET /preflight checks the GPU, the NIM key and the Papiers token for real.
 """
 
@@ -72,9 +74,15 @@ def create(factory=None, checks=CHECKS, autostart=None):
     state = {}
     autostart = os.environ.get("AUTOSTART") == "1" if autostart is None else autostart
 
-    def start():
+    record_hyps = int(os.environ.get("RECORD_HYPS", "8"))
+
+    def start(record=False):
         if state.get("thread"):
             return
+        if record:
+            state["orch"].record, state["orch"].max_hyps = True, record_hyps
+            state["orch"].log.emit("agent_log", text=f"Recording mode: the full loop for up to {record_hyps} hypotheses or until Stop. "
+                                                     "Directives and help answers are accepted at any point.")
         state["thread"] = threading.Thread(target=state["orch"].run, daemon=True)
         state["thread"].start()
 
@@ -99,11 +107,13 @@ def create(factory=None, checks=CHECKS, autostart=None):
     @app.get("/health")
     def health():
         orch = state["orch"]
-        return {"session": orch.session, "events": len(orch.log.events), "log": str(orch.log.path), "started": bool(state.get("thread"))}
+        return {"session": orch.session, "events": len(orch.log.events), "log": str(orch.log.path), "started": bool(state.get("thread")), "record": orch.record}
 
     @app.get("/preflight")
     def preflight():
-        return {"started": bool(state.get("thread")), "checks": {name: run_check(fn) for name, fn in checks.items()}}
+        orch = state["orch"]
+        return {"started": bool(state.get("thread")), "record": orch.record, "cap": orch.max_hyps, "record_cap": record_hyps,
+                "checks": {name: run_check(fn) for name, fn in checks.items()}}
 
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
@@ -130,7 +140,7 @@ def create(factory=None, checks=CHECKS, autostart=None):
                 if not valid(cmd):
                     continue
                 if cmd["type"] == "start":
-                    start()
+                    start(cmd.get("record") is True)
                 else:
                     orch.command(cmd)
         except WebSocketDisconnect:

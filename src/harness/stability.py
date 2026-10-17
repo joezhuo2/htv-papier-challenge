@@ -2,14 +2,15 @@
 
 Runs the best FP32 tiles and the FP16 variant N times each, every run in its own process and timed interleaved with naive, eager
 and the other config. Prints one JSON line per run and a summary: the spread within a window (from the per-round ratios) and the
-spread across processes (coefficient of variation of each speedup). Evidence lands in runs/stability/.
+spread across processes (coefficient of variation of each speedup). Evidence lands in runs/stability/, and the FP32 tiles'
+speedups vs naive and eager are saved to src/harness/headroom.json, which the hypothesis prompt quotes as the measured headroom.
 """
 
 import json
 import statistics
 import sys
 
-from harness import runner
+from harness import noise, runner
 from harness.kernel import NAIVE, Params
 
 FP32 = Params(block_m=128, block_n=128, block_k=32, warps=4, stages=3)
@@ -36,6 +37,9 @@ def main(n=10):
                 "median_spread_within_run": round(statistics.median(r["spreads"][ref] for r in rs if not r["error"]), 4),
             }
     print(json.dumps({"summary": summary}, indent=1))
+    keep = ("median", "min", "max")
+    noise.HEADROOM_FILE.write_text(json.dumps({"params": FP32.dict(), "n": n, "vs_naive": {k: summary["fp32 vs naive"][k] for k in keep},
+                                               "vs_eager": {k: summary["fp32 vs eager"][k] for k in keep}}, indent=2) + "\n")
 
 
 if __name__ == "__main__":

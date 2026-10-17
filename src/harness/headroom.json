@@ -1,0 +1,6 @@
+{
+  "params": {"block_m": 128, "block_n": 128, "block_k": 32, "warps": 4, "stages": 3, "acc": "fp32", "gelu": "exact"},
+  "n": 10,
+  "vs_naive": {"median": 2.753, "min": 2.7, "max": 2.777},
+  "vs_eager": {"median": 1.026, "min": 1.02, "max": 1.039}
+}

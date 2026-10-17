@@ -53,4 +53,5 @@ def new(sid=None, **kw) -> Orchestrator:
     sid = sid or time.strftime("%Y%m%d-%H%M%S")
     log = Log(runner.RUNS / "sessions" / sid / "events.jsonl")
     return Orchestrator(lambda spec, run_id: runner.run(spec, run_id=run_id), asker(log), log, f"sessions/{sid}",
-                        "fast", "strong", noise.band(), context=papiers.search if papiers.binary() else None, **kw)
+                        "fast", "strong", noise.band(), context=papiers.search if papiers.binary() else None,
+                        headroom=noise.headroom(), **kw)
