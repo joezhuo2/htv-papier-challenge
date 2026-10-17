@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Lens } from '@contract/types'
-import { DEFAULT_REPLAY, JUDGING, type Source } from './source'
+import { JUDGING, type Source } from './source'
 import { chapters, type Chapter } from './chapters'
 import { Preflight, ResultCard, Stalled } from './components/Final'
 import { useSession } from './useSession'
@@ -93,7 +93,7 @@ export function App({ source }: { source: Source }) {
   return (
     <div className="app" data-lens={view.lens}>
       <TopBar
-        mode={source.mode} mock={view.mock} recording={view.log.some(l => l.text.startsWith('Recording mode'))} judging={JUDGING} now={s.now} paused={s.paused} ended={s.ended} speed={s.speed}
+        mode={source.mode} file={s.file} mock={view.mock} recording={view.log.some(l => l.text.startsWith('Recording mode'))} judging={JUDGING} now={s.now} paused={s.paused} ended={s.ended} speed={s.speed}
         compression={s.compression} chapters={marks} autoPause={s.autoPause}
         onPause={controls.pause} onResume={controls.resume} onStep={controls.step}
         onPrev={controls.prev} canPrev={s.index > 0} onMode={m => { window.location.search = `?mode=${m}` }}
@@ -133,7 +133,7 @@ export function App({ source }: { source: Source }) {
             </div>
           ) : null}
           {source.mode === 'live' && !view.started ? (
-            <Preflight onStart={record => s.send(record ? { type: 'start', record } : { type: 'start' })} fallback={`?mode=replay&file=${encodeURIComponent(DEFAULT_REPLAY)}`} log={view.log} />
+            <Preflight onStart={record => s.send(record ? { type: 'start', record } : { type: 'start' })} fallback="?mode=replay" log={view.log} />
           ) : tab === 'result' && view.finished ? <ResultCard view={view} /> : tab === 'report' && view.report ? <ReportView view={view} /> : (
             <>
               <BranchGraph view={view} onSelectBranch={selectBranch} onSelectRun={selectRun} showPending={source.mode !== 'replay'} />

@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { demoScript } from '@contract/demo-script'
-import { compress, parseLog, parseSource } from '../src/source'
+import { compress, loadDefault, parseLog, parseSource } from '../src/source'
 
 describe('source', () => {
   it('parses the mode query', () => {
@@ -23,5 +23,28 @@ describe('source', () => {
       expect(e.t - out[i].t).toBeLessThanOrEqual(4000)
     })
     expect(out.at(-1)!.t).toBeLessThan(demoScript.at(-1)!.t)
+  })
+
+  describe('default recorded run', () => {
+    afterEach(() => vi.unstubAllGlobals())
+    const log = demoScript.slice(0, 3).map(e => JSON.stringify(e)).join('\n')
+    const serve = (files: Record<string, string>) => {
+      const fetch = vi.fn(async (f: string) => (f in files ? new Response(files[f]) : new Response('not found', { status: 404 })))
+      vi.stubGlobal('fetch', fetch)
+      return fetch
+    }
+
+    it('prefers demo.jsonl', async () => {
+      serve({ '/runs/demo.jsonl': log, '/runs/fallback1.jsonl': log })
+      expect((await loadDefault()).file).toBe('/runs/demo.jsonl')
+    })
+
+    it('falls back to fallback1, then fallback2 when one is invalid, and stops at the first missing number', async () => {
+      const fetch = serve({ '/runs/fallback1.jsonl': '{"broken": true}', '/runs/fallback2.jsonl': log, '/runs/fallback4.jsonl': log })
+      expect((await loadDefault()).file).toBe('/runs/fallback2.jsonl')
+      serve({ '/runs/fallback2.jsonl': log })
+      await expect(loadDefault()).rejects.toThrow('No recorded run could be loaded, tried /runs/demo.jsonl (404), /runs/fallback1.jsonl (404)')
+      expect(fetch).not.toHaveBeenCalledWith('/runs/fallback3.jsonl')
+    })
   })
 })

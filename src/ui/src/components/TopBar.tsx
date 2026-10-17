@@ -4,6 +4,7 @@ import { clock } from '../state/derive'
 
 interface Props {
   mode: Mode
+  file?: string
   mock: boolean
   recording?: boolean
   judging: boolean
@@ -46,6 +47,7 @@ export function TopBar(p: Props) {
           </span>
         ) : null}
       </span>
+      {p.mode === 'replay' && p.file ? <span className="mono small muted" data-testid="replay-file">{p.file.split('/').pop()}</span> : null}
       {p.mode === 'replay' && p.mock ? <span className="tag mock">mock data</span> : null}
       <div className="toggle" role="group" aria-label="data source">
         {modes.map(m => (

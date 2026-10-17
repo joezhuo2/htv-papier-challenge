@@ -97,7 +97,7 @@ describe('labels, tooltips and the result screen', () => {
 
 describe('judging build and log validation', () => {
   it('the judging build never falls back to mock', () => {
-    expect(parseSource('', true)).toMatchObject({ mode: 'replay', file: '/runs/demo.jsonl' })
+    expect(parseSource('', true)).toMatchObject({ mode: 'replay', file: undefined })
     expect(parseSource('?mode=mock', true).mode).toBe('replay')
     expect(parseSource('?mode=live', true).mode).toBe('live')
     expect(parseSource('', false).mode).toBe('mock')

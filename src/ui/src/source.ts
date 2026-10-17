@@ -12,7 +12,30 @@ export const parseSource = (search: string, judging = JUDGING): Source => {
   const q = new URLSearchParams(search)
   const m = q.get('mode')
   const mode: Mode = m === 'replay' || m === 'live' ? m : judging ? 'replay' : 'mock'
-  return { mode, file: q.get('file') ?? (mode === 'replay' ? DEFAULT_REPLAY : undefined), ws: q.get('ws') ?? undefined }
+  return { mode, file: q.get('file') ?? undefined, ws: q.get('ws') ?? undefined }
+}
+
+export const fallbackFile = (i: number) => (i === 0 ? DEFAULT_REPLAY : `/runs/fallback${i}.jsonl`)
+
+// the default recorded run: demo.jsonl, then fallback1.jsonl, fallback2.jsonl, ... in order. A file that is missing or fails
+// validation is skipped, and the search stops at the first fallback number that does not exist.
+export const loadDefault = async (): Promise<{ file: string; events: DemoEvent[] }> => {
+  const tried: string[] = []
+  for (let i = 0; i < 100; i++) {
+    const file = fallbackFile(i)
+    const res = await fetch(file)
+    if (res.ok) {
+      try {
+        return { file, events: parseLog(await res.text()) }
+      } catch (e) {
+        tried.push(`${file} (${(e as Error).message})`)
+        continue
+      }
+    }
+    tried.push(`${file} (${res.status})`)
+    if (i > 0) break
+  }
+  throw new Error(`No recorded run could be loaded, tried ${tried.join(', ')}`)
 }
 
 export const MAX_GAP_MS = 4000

@@ -3,7 +3,7 @@ import type { Command, DemoEvent } from '@contract/types'
 import { demoScript } from '@contract/demo-script'
 import { Player } from './player'
 import { initialView, reduce } from './state/reducer'
-import { compress, loadLog, type Source } from './source'
+import { compress, loadDefault, loadLog, type Source } from './source'
 import { chapters } from './chapters'
 import { connectLive, defaultUrl, type LiveStatus } from './live'
 
@@ -31,13 +31,17 @@ export function useSession(src: Source) {
   const last = useRef({ t: 0, wall: 0, running: false })
   const speedRef = useRef(speed)
 
+  const [file, setFile] = useState(src.file)
   useEffect(() => {
-    if (src.mode !== 'replay' || !src.file) return
-    loadLog(src.file).then(raw => {
+    if (src.mode !== 'replay') return
+    const load = src.file ? loadLog(src.file).then(log => ({ file: src.file!, events: log })) : loadDefault()
+    load.then(loaded => {
+      const raw = loaded.events
       const c = compress(raw)
+      setFile(loaded.file)
       setCompression({ from: raw.at(-1)!.t - raw[0].t, to: c.at(-1)!.t - c[0].t })
       setEvents(c)
-    }, (err: Error) => setError(`Could not replay ${src.file}: ${err.message}`))
+    }, (err: Error) => setError(src.file ? `Could not replay ${src.file}: ${err.message}` : err.message))
   }, [src.mode, src.file])
 
   useEffect(() => {
@@ -126,7 +130,7 @@ export function useSession(src: Source) {
   }, [src.mode])
 
   return {
-    view, dispatch, controls, send, sent, speed, paused, ended, index, now, status, error, notices, compression, autoPause,
+    view, dispatch, controls, send, sent, speed, file, paused, ended, index, now, status, error, notices, compression, autoPause,
     // every event of the session: the whole log in mock and replay, what has arrived so far in live mode
     events: src.mode === 'live' ? liveEvents : events ?? [],
     retry: () => live.current?.retry(),

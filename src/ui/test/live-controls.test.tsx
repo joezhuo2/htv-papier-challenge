@@ -41,7 +41,7 @@ describe('live controls', () => {
     const pf = screen.getByTestId('preflight')
     expect(within(pf).getByTestId('check-gpu').textContent).toContain('ok')
     expect(within(pf).getByTestId('check-papiers').textContent).toContain('failed')
-    expect(within(pf).getByText('Fall back to the recorded run').getAttribute('href')).toBe('?mode=replay&file=%2Fruns%2Fdemo.jsonl')
+    expect(within(pf).getByText('Fall back to the recorded run').getAttribute('href')).toBe('?mode=replay')
     fireEvent.click(screen.getByRole('button', { name: 'Start session' }))
     expect(sent()).toEqual([{ type: 'start' }])
     push(recorded[0])
