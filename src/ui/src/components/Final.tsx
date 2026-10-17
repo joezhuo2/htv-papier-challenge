@@ -52,7 +52,7 @@ export function ResultCard({ view }: { view: View }) {
 
 interface Check { ok: boolean; detail: string }
 
-export function Preflight({ onStart, fallback }: { onStart: (record: boolean) => void; fallback: string }) {
+export function Preflight({ onStart, fallback, log }: { onStart: (record: boolean) => void; fallback: string; log: View['log'] }) {
   const [checks, setChecks] = useState<Record<string, Check>>()
   const [caps, setCaps] = useState<{ cap: number | null; record_cap: number }>()
   const [error, setError] = useState<string>()
@@ -61,6 +61,8 @@ export function Preflight({ onStart, fallback }: { onStart: (record: boolean) =>
   }, [])
   const plural = (n: number) => `${n} hypothes${n === 1 ? 'is' : 'es'}`
   const failed = checks && Object.values(checks).some(c => !c.ok)
+  const latest = log.at(-1)
+  const blocked = latest?.text.startsWith('Cannot start')
   return (
     <article className="card focus" data-testid="preflight" style={{ maxWidth: 560 }}>
       <h2>Pre-flight</h2>
@@ -74,6 +76,7 @@ export function Preflight({ onStart, fallback }: { onStart: (record: boolean) =>
           ))}
         </ul>
       )}
+      {latest ? <p className={`small${blocked ? ' strong' : ' muted'}`} role={blocked ? 'alert' : 'status'} data-testid="starting">{latest.text}</p> : null}
       <div className="inline">
         <button className="primary" onClick={() => onStart(false)} disabled={!checks} data-testid="start">Start session</button>
         {caps?.cap ? <span className="small muted">table demo, capped at {plural(caps.cap)}</span> : null}

@@ -27,7 +27,8 @@ export function useSession(src: Source) {
   const [liveEvents, setLiveEvents] = useState<DemoEvent[]>([])
   const player = useRef<Player | undefined>(undefined)
   const live = useRef<ReturnType<typeof connectLive> | undefined>(undefined)
-  const last = useRef({ t: 0, wall: 0 })
+  // the live clock ticks from the last event's time, and stops once the session finishes or cannot start
+  const last = useRef({ t: 0, wall: 0, running: false })
   const speedRef = useRef(speed)
 
   useEffect(() => {
@@ -57,7 +58,8 @@ export function useSession(src: Source) {
     const c = connectLive({
       url: src.ws ?? defaultUrl(window.location),
       onEvent: e => {
-        last.current = { t: e.t, wall: Date.now() }
+        const stopped = e.type === 'session_finished' || (e.type === 'agent_log' && e.text.startsWith('Cannot start'))
+        last.current = { t: e.t, wall: Date.now(), running: !stopped }
         setLiveEvents(l => (e.type === 'session_started' ? [e] : [...l, e]))
         dispatch(e)
       },
@@ -76,7 +78,7 @@ export function useSession(src: Source) {
         setEnded(p.ended)
         setPaused(p.paused)
         setIndex(p.index)
-      } else if (src.mode === 'live') setNow(last.current.t + Date.now() - last.current.wall)
+      } else if (src.mode === 'live') setNow(last.current.t + (last.current.running ? Date.now() - last.current.wall : 0))
     }, 200)
     return () => clearInterval(id)
   }, [src.mode])

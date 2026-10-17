@@ -727,3 +727,13 @@ def test_restart_replaces_a_stopped_session_with_one_waiting_for_start(tmp_path)
         assert len(made) == 2 and made[0].stopped and types(made[0])[-1] == "session_finished"
         assert client.get("/health").json() | {} and client.get("/preflight").json()["started"] is False
         assert made[1].log.events == []
+
+
+def test_a_baseline_that_cannot_run_is_reported_instead_of_crashing(tmp_path):
+    broken = Metrics(error="exit 1: Traceback ...\nRuntimeError: Found no NVIDIA driver on your system.")
+    o = make(tmp_path, Asker(h(P, 2.0, "naive")), engine=Engine(TABLE | {"eager": broken}))
+    o.run()
+    assert "session_started" not in types(o)
+    assert of(o, "agent_log")[-1]["text"] == ("Cannot start: the eager baseline did not run (RuntimeError: Found no NVIDIA driver on your system.). "
+                                              "Check the GPU, then press New session.")
+    assert of(o, "agent_log")[0]["t"] < 1000

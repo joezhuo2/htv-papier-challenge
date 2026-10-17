@@ -91,6 +91,19 @@ describe('live controls', () => {
     expect(screen.getByText('Session finished, new directives are not applied.')).toBeTruthy()
   })
 
+  it('the clock starts at 0:00, ticks from the first event, and a baseline failure shows on the pre-flight card', async () => {
+    const { push } = setup()
+    await act(async () => { await vi.advanceTimersByTimeAsync(400) })
+    expect(screen.getByLabelText('elapsed').textContent).toBe('0:00')
+    push({ t: 0, type: 'agent_log', text: 'Measuring baselines: PyTorch eager and the naive Triton kernel.' })
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(screen.getByLabelText('elapsed').textContent).toBe('0:03')
+    push({ t: 4000, type: 'agent_log', text: 'Cannot start: the eager baseline did not run (RuntimeError: Found no NVIDIA driver on your system.). Check the GPU, then press New session.' })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(screen.getByLabelText('elapsed').textContent).toBe('0:04')
+    expect(screen.getByTestId('starting').textContent).toContain('Found no NVIDIA driver')
+  })
+
   it('shows a timeout as a visible state with retry and stop, cleared by progress', () => {
     const { sent, push } = setup()
     push(recorded[0], { t: 3000, type: 'agent_error', kind: 'llm_timeout', branch: 'main', retry_in_s: 30, text: 'The hypothesis model failed (Timeout). Retrying in 30 s or on retry.' })

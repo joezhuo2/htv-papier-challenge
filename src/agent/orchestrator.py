@@ -129,7 +129,8 @@ class Orchestrator:
         return self.max_hyps is not None and len(self.hyps) >= self.max_hyps
 
     def run(self):
-        self.start()
+        if not self.start():
+            return
         idle = time.monotonic()
         while not self.stopped:
             if self.drain():
@@ -148,11 +149,19 @@ class Orchestrator:
     # ---- session ----
 
     def start(self):
+        """Measures the baselines. Returns False, with the reason in the agent log, when the session cannot start."""
+        self.log.t0 = self.log.clock()  # session time starts at Start, not when the server built the session
         self.log.emit("agent_log", text="Measuring baselines: PyTorch eager and the naive Triton kernel.")
         self.eager = self.engine({"target": "eager"}, f"{self.session}/eager")
         self.naive = self.engine({"target": "triton", "params": NAIVE.dict()}, f"{self.session}/naive")
+        failed = next((name for name, m in (("eager", self.eager), ("naive", self.naive)) if m.error), None)
+        if failed:
+            cause = getattr(self, failed).error.strip().splitlines()[-1][:240]
+            self.log.emit("agent_log", text=f"Cannot start: the {failed} baseline did not run ({cause}). Check the GPU, then press New session.")
+            return False
         if not self.naive.correct_ok:
-            raise RuntimeError(f"Naive kernel fails the correctness gate: max_error {self.naive.max_error}")
+            self.log.emit("agent_log", text=f"Cannot start: the naive kernel fails the correctness gate (max error {sci(self.naive.max_error)}).")
+            return False
         main = Branch("main", [], "Baseline tuning", "both")
         self.branches["main"] = main
         self.log.emit("session_started", baselines={"eager": self.eager.contract(), "naive": self.naive.contract()}, branch=main.dict())
@@ -161,6 +170,7 @@ class Orchestrator:
         if self.record:
             self.log.emit("agent_log", text=f"Recording mode: the full loop for up to {self.max_hyps} hypotheses or until Stop. "
                                             "Directives and help answers are accepted at any point.")
+        return True
 
     def finish(self):
         ledger = [{"hypothesis": h.id, "verdict": h.judgment.verdict, "history": h.history} for h in self.hyps if h.judgment]
