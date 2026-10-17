@@ -1,8 +1,25 @@
-# Running log (overnight, Saturday Oct 17)
+# Running log (Saturday Oct 17)
 
-Read this first at 7:30. Newest entries first in each list.
+Read this first. Newest entries first in each list. Numbers, replay candidates and models per role are in docs/results.md.
 
 ## Done
+- 11:05 Recorded runs/record2.jsonl on the final code: seeded FP16 provisional 13 s after the Speed directive, flip and conflict the instant the Precision directive arrived, post-mortem 15 s later, two help requests answered, hybrid proposed and approved, 196 s total with 64 s in model calls. The GPU then dropped out of WSL, so the hybrid run and two others crashed at CUDA startup. Not usable as the demo.
+- 11:00 Replay fallback: demo.jsonl, then fallback1.jsonl, fallback2.jsonl and on (a missing or invalid file is skipped, the search stops at the first missing fallback number). The top bar shows which file is playing.
+- 10:55 UI: Papiers ids render as note chips with the cleaned title, a provisional result shows a card and a "check" badge on the Precision tab (the cue for the Precision directive), Save is labeled "save partial replay" until session_finished.
+- 10:50 Agent rework: commands (directives, help answers, hybrid approval) apply the moment they arrive through a listener thread, and help and hybrid deadlines run on the wall clock; the first Speed hypothesis is the harness-seeded FP16 variant of the best tiles, with its claim built from the bound and params; hybrid proposals after a conflict merge the fastest correct run of each lens (approve runs it once, past the cap); summaries are computed in code (confidence from the measured spread, no LLM); failed runs get a templated post-mortem with the shared memory arithmetic; a typed hunch becomes the next hypothesis on its lens branch or gets a plan_change saying why not; two failed runs in a row ask for help; duplicate answers are ignored silently; the cap reports promised iterations it cut; every branch gets a final status and the replay (runs/sessions/<id>/replay.jsonl) is written only after session_finished; failover and file paths go to debug.log, not the replay.
+- 10:45 Shared memory is checked before any run: (stages - 1) x (block_m x block_k + block_k x block_n) x 2 bytes against 101376, matching both logged failures. The limit is in the prompt.
+- 10:40 Models: post-mortems pinned to gemini-3.8-flash with a 15 s timeout and a factual fallback; a failed route is skipped for 300 s per model, or for the session on permission or bad request errors; OmniRoute auto/coding is first for hypotheses but its connected providers all refuse, so it falls through to Gemini.
+- 10:20 Recording mode (Start recording): H0, then waits for a lens directive (90 s, then a flagged default on main), runs until Stop or 8 hypotheses. Start session stays the one-hypothesis table demo. Stop acts at once, New session restarts through POST /restart, the clock starts at 0:00 on Start, Start locks while starting, baseline failures show on the pre-flight card.
+- 09:00 Live sessions live1 to live4 and record1 (see docs/results.md): the flip reproduced in every session where Precision came after FP16. Seeding FP16 on the naive tiles was a bug, fixed.
+
+## Pending
+- Record the demo session on the final code with a healthy GPU, following the recording plan, and copy it to runs/demo.jsonl. Check nvidia-smi first; run wsl --shutdown from Windows if it fails.
+- Replay player work requested at 10:30, not started: per-gap caps (2.5 s, 5 s for a run), a real-time toggle, chapter labels per hypothesis and verdict, n and p shortcuts, exact-state seeks, and the 60 second tour.
+- Part B checks not run yet: the fresh-clone README walk-through and the gpu and papiers marked test suites.
+- OmniRoute needs a working provider connected in its dashboard (or OMNIROUTE=0 in .env).
+- gemini-3.8-flash quota was exhausted at 10:54, post-mortems use the factual template until it resets.
+
+## Earlier (overnight, 04:05 to 05:15)
 - 05:15 Docs: everything from the overnight chat is now in docs/ (README index, architecture, runbook, findings, contract, ui, ui-plan, pitch-notes) with screenshots of candidate1 in docs/screenshots.
 - 05:05 candidate1 (real session, final code, Gemini, interleaved timing): the flip reproduced (seeded FP16 on the Speed branch at 1.54x +/- 0.12x over its FP32 parent, provisional under 2e-2, rejected 3.6 s later by the Precision directive from logged metrics, post-mortem with the K sweep). Weak as a showcase: the best confirmed result is r1, 2.78x vs naive and 0.90x vs eager, seven of nine hypotheses missed, two help requests timed out to defaults. Not copied to runs/demo.jsonl.
 - 04:55 Repo cleanup: oxlint for the UI (typescript-eslint does not support TypeScript 7) and Ruff for Python, both clean, with the flagged code fixed rather than silenced except two documented exceptions. README documents the judging build, pre-flight, stability script and lint commands. Tests: 84 vitest, 50 pytest, GPU tests pass.
@@ -15,13 +32,6 @@ Read this first at 7:30. Newest entries first in each list.
 - 04:18 Step 1 timing rework measured (runs/stability.log): every candidate is timed in one child process interleaved with naive, eager and its parent best over 7 rounds. Across 10 separate processes the speedups now vary by 0.7 to 0.9% (CV), versus 1.28x to 2.36x for the same comparison before. Verdicts use max(calibrated band, this run's within-window half-range, about 4%) as the noise, which is conservative.
 - 04:17 Step 2 batch report (behavior only, numbers provisional, no replay taken from it): night1 and night2 ran the older code with NIM, night3 the interleaved timing with Gemini. The agent proposed FP16 itself once (night2, on main before any directive, rejected at the strict default). Every session needed the seeded FP16 variant on the Speed branch; it flipped provisional then rejected only in night3, the misses in night1 and night2 came from the old cross-process speed check. No implausible predictions (1.02 to 1.5x vs best, 3.5x vs naive). Every papiers_context event carries the real query, note id (cnv_...) and a 240 character excerpt, and the Precision query's empty result is logged as no matching notes. Help requests fired in night2 and night3, exports were written in all three.
 - 04:05 Moved this file to docs/status.md.
-
-## Pending
-- Choose and record the demo session, copy its events.jsonl to runs/demo.jsonl (the judging build and the live fallback open it), and retake the Devpost screenshots from it.
-- Bug: after a session finishes, an expired help card can still show a countdown and the tab badges stay lit (seen in the candidate1 result screenshot). Help cards should show "proceeding on assumption" once the deadline has passed in event time, and badges should clear when the session ends.
-- Tier 2 in the agent: approve_hybrid, hybrid_proposed and report_ready are not implemented (the UI supports them).
-- A real recorded session for the demo replay: run with the interleaved timing and Gemini, copy its events.jsonl to runs/demo.jsonl (the judging build and the live fallback both point there).
-- Live rehearsal with the UI against the server (pre-flight, Start, answer a help request, Stop, Save as replay).
 
 ## Key numbers (interleaved timing, 10 runs each)
 - Best FP32 tiles (128x128x32, 4 warps, 3 stages): 2.75x vs naive (2.70 to 2.78), 1.03x vs eager (1.02 to 1.04).

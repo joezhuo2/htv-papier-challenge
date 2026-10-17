@@ -5,7 +5,7 @@ What to say, what to disclose, and which numbers are safe to quote.
 ## Disclosures (say these out loud or in the writeup)
 
 - One person plays both lenses by switching tabs. In a real team the Speed and Precision owners would be two people.
-- The FP16 accumulation hypothesis is a seeded stretch candidate when the agent does not propose it on a Speed branch itself (the hypothesis note says "Harness variant"). The agent tests it, its verdict is computed in code, and it writes the post-mortem. In the logged sessions the agent proposed FP16 on its own once, on main before any directive, after reading the Papiers Triton tutorial conversation.
+- The FP16 accumulation hypothesis is the harness-seeded first hypothesis on the Speed lens (its note says "Harness-seeded variant, not proposed by the model", and its claim is built in code). The agent tests it, its verdict is computed in code, and it writes the post-mortem. In the logged sessions the agent proposed FP16 on its own once, on main before any directive, after reading the Papiers Triton tutorial conversation.
 - Error bounds are lens-specific and set in code: the Speed lens tolerates 2e-2 on the standard batch, the Precision lens demands 1e-3 on the standard and adversarial batches. That is why FP16 is first provisional and then rejected.
 - Papiers is read-only through its CLI. The agent reads it before each hypothesis and cites what it used. Findings are exported as Markdown files for manual import, the UI says "exported", never "written".
 - Recorded replays compress idle gaps over 4 s, and the top bar says so with the before and after durations.

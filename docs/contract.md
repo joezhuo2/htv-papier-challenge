@@ -17,5 +17,11 @@
 
 - A hypothesis or run id on `Summary`: the UI ties a summary to the newest finished run on its branch.
 - A field on `PostMortem` for what the agent will not try again: the UI derives it from the pivot.
-- A `dismiss_hybrid` command, and agent support for `approve_hybrid`, `hybrid_proposed` and `report_ready` (Tier 2, not implemented in the agent).
+- A `dismiss_hybrid` command, and agent support for `report_ready` (the comparative report is only in the mock).
+
+## Changes made at 10:50
+
+9. The agent emits `hybrid_proposed` and acts on `approve_hybrid` (a `merge` branch with both parents, label Hybrid, status `merged` on the parents when it is confirmed).
+10. `plan_change.help` is the id it answers: a help request (`hq1`) or a directive (`d2`) for hunch replies.
+11. Failed runs get a `post_mortem` with an empty sweep. Every branch has a final `branch_status` before `session_finished`, and provider failover lines are no longer `agent_log` events.
 - Failed runs send null metric fields although `Metrics` types them as numbers.

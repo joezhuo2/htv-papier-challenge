@@ -20,7 +20,7 @@ A top bar, then three columns that each scroll on their own (no page scroll at 1
 - Live extras: pre-flight panel with real checks, Start, and a fallback link to the recorded run; a visible stalled card for model timeouts with Retry and Stop; failed runs show "timed out (15 s harness limit)"; Save as replay downloads the received events.
 - Plain-language hover definitions for adversarial, bound, provisional, inconclusive, rejected, confirmed, noise band, speedup, eager and naive.
 - Final result screen when a session finishes: the best result with params, same-window speedups and the bound it was judged against, every rejection with its reason, and the lens owners' directives, answers and plan changes with the exported files.
-- Judging build (`npm run build:judging`): mock mode is never reachable and the app opens `runs/demo.jsonl`.
+- Judging build (`npm run build:judging`): mock mode is never reachable and the app opens the first recorded run that loads, `runs/demo.jsonl`, then `runs/fallback1.jsonl`, `runs/fallback2.jsonl` and on (the top bar shows the file).
 
 ## Feedback applied (Saturday, in order)
 

@@ -12,7 +12,7 @@ Working today: the benchmark harness, the agent loop with code computed verdicts
 
 Before each run the agent states a prediction (minimum speedup against naive or the best so far). The error bound is not the agent's choice: the lens sets it in code. With no directive the strict 1e-3 applies to the standard batch. A Speed directive gives Speed branches a looser standard-batch tolerance (2e-2 by default, parsed from the directive text, never above 5e-2). A Precision directive sets 1e-3 on the standard and adversarial batches for every branch. Adversarial error is measured on every run, so a Precision directive re-judges logged runs without re-running them. Verdicts are `confirmed`, `rejected`, or `inconclusive` (inside the noise band), and a result that only passes under the Speed tolerance is marked provisional.
 
-FP16 accumulation is the designed failure: it is faster on this GPU, its standard error (1.3e-2, identical on every run thanks to fixed-seed inputs) passes the Speed tolerance, and the Precision directive flips it to rejected with a post-mortem and an error versus K sweep. If the agent does not propose FP16 on a Speed branch itself, the harness adds it as a disclosed, seeded variant.
+FP16 accumulation is the designed failure: it is faster on this GPU, its standard error (1.3e-2, identical on every run thanks to fixed-seed inputs) passes the Speed tolerance, and the Precision directive flips it to rejected with a post-mortem and an error versus K sweep. The first hypothesis on the Speed lens is this FP16 variant of the best tiles so far, seeded by the harness and disclosed in its note, so the story is the same in every session.
 
 ## Hardware and measured baseline
 
@@ -37,7 +37,7 @@ All models run through NVIDIA NIM's hosted OpenAI compatible API. Each model got
 | google/gemma-4-31b-it | 12.9 s | 100% | 100% | 100% |
 | nvidia/nemotron-3.5-lightning-30b-a3b | 165 s | 100% | 60% | 20% |
 
-DeepSeek v4.1 flash and GLM 5.3 flash were dropped because single calls took several minutes. The defaults are `openai/gpt-oss-20b` for hypotheses and edits and `google/gemma-4-31b-it` for post-mortems and summaries. Hosted latency varied a lot during the hackathon, so responses are cached in `runs/llm_cache/`.
+DeepSeek v4.1 flash and GLM 5.3 flash were dropped because single calls took several minutes. That benchmark set the NIM fallbacks (`openai/gpt-oss-20b` for hypotheses, `google/gemma-4-31b-it` for post-mortems). The current order is a local OmniRoute gateway, then `gemini-3.5-flash-lite`, then NIM for hypotheses, and `gemini-3.8-flash` for post-mortem prose; summaries and verdicts are computed in code. See docs/results.md for the models per role. Hosted latency varied a lot during the hackathon, so responses are cached in `runs/llm_cache/`.
 
 ## How correctness is measured
 
@@ -94,7 +94,7 @@ uv run uvicorn server.app:app --port 8000
 cd src/ui && npm run dev
 ```
 
-The UI also plays the mock script (`?mode=mock`, the default in development, always tagged mock) and recorded sessions (`?mode=replay&file=/runs/sessions/<id>/events.jsonl`, labelled recorded run, with idle gaps over 4 s compressed and disclosed). For judging, build without mock mode; it opens the recorded run at `runs/demo.jsonl`:
+The UI also plays the mock script (`?mode=mock`, the default in development, always tagged mock) and recorded sessions (`?mode=replay&file=/runs/sessions/<id>/events.jsonl`, labelled recorded run, with idle gaps over 4 s compressed and disclosed). For judging, build without mock mode; it opens the first recorded run that loads, `runs/demo.jsonl` then `runs/fallback1.jsonl`, `runs/fallback2.jsonl` and on:
 
 ```bash
 cd src/ui && npm run build:judging && npx vite preview
