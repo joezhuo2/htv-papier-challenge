@@ -527,7 +527,7 @@ def test_suggestion_answer_becomes_the_next_hypothesis_and_is_exported(tmp_path)
     nxt = next(e["hypothesis"] for e in of(o, "hypothesis_proposed") if e["t"] >= ans["t"])
     assert nxt["note"] == "Suggested by the Speed lens in answer to hq1" and nxt["params"]["gelu"] == "approx"
     prompt = next(m for model, tag, m in o.ask.calls if tag.startswith("speed-3"))
-    assert "Try the tanh approximate GELU." in prompt[1]["content"]
+    assert "Try the tanh approximate GELU." in prompt[1]["content"]  # a first test goes to the model
     files = [i["file"] for e in of(o, "findings_exported") for i in e["items"]]
     assert "exports/hq1-answer.md" in files
     assert "Try the tanh approximate GELU." in (tmp_path / "exports" / "hq1-answer.md").read_text()
@@ -997,6 +997,9 @@ def test_constraint_directives_are_bounds_and_a_repeated_hunch_is_retested_on_th
     texts = [e["text"] for e in of(o, "plan_change")]
     assert any(t.startswith("d1 sets a bound, not a specific change") for t in texts)
     assert any("already tested in H3 (rejected, 0.86x vs its parent) on 128x128x32 tiles" in t for t in texts)
+    d2 = [e["text"] for e in of(o, "plan_change") if e["help"] == "d2"]
+    assert len(d2) == 1 and "This is a retest" in d2[0] and d2[0].endswith("so the run changes only gelu exact to approx on the current best 128x128x32 tiles, 8 warps, 3 stages.")
+    assert o.hunches["d2"] == "H4"
     h4 = hyps["H4"]
     assert h4["params"] == w8 | {"gelu": "approx"} and h4["note"] == "Hunch from the Speed lens in directive d2, a retest of H3 on the current best tiles"
     assert h4["claim"].startswith("Retest of H3: gelu exact to approx on the current best 128x128x32 tiles, 8 warps, 3 stages is at least 1.02x")
@@ -1279,12 +1282,11 @@ def test_a_hybrid_that_cannot_be_proposed_is_explained_once(tmp_path):
 
 def test_a_retest_refusal_says_which_run_already_had_the_config(tmp_path):
     o = converged_state(tmp_path)
-    hint = ("Try the tanh approximate GELU.", "Hunch from the Speed lens in directive d3", "d3", {"gelu": "approx"})
-    tried = {json.dumps(x.params.dict(), sort_keys=True) for x in o.hyps}
-    assert o.retest(o.branches["speed2"], o.hyps[0].params, hint, tried) is None
-    text = of(o, "plan_change")[-1]["text"]
-    assert text == ("\"Try the tanh approximate GELU.\" is not retested because that exact config, 64x64x32 tiles, 4 warps, 3 stages, FP32 accumulation, "
-                    "approx GELU, already ran as H1 on prec (inconclusive). The hunch was last tested in H2 (confirmed).")
+    o.hunch(o.branches["prec"], "Try the tanh approximate GELU.", "Hunch from the Speed lens in directive d3", "d3", "speed", {"gelu": "approx"})
+    assert [e["text"] for e in of(o, "plan_change")] == [
+        ("Because the Speed lens sent \"Try the tanh approximate GELU.\", I am not testing it because that exact config, 64x64x32 tiles, 4 warps, 3 stages, "
+        "FP32 accumulation, approx GELU, already ran as H1 on prec (inconclusive). This is a retest: it was already tested in H2 (confirmed) on 128x128x32 tiles.")]
+    assert "prec" not in o.hints and o.hunches["d3"].startswith("not run: that exact config")
 
 
 # ---- fixes from the latest full recording ----
@@ -1426,3 +1428,14 @@ def test_a_claim_that_names_other_numbers_is_rebuilt_from_the_params(tmp_path):
     assert h1["claim"].startswith("Warps 4 to 8, giving 128x128x32 tiles, 8 warps, 3 stages") and h1["claim"].endswith(" Revisits H0.")
     assert "4 stages" not in h1["claim"] and "the model's text named 4 stages" in h1["note"]
     assert hyp.mismatches(h1["claim"].split(", giving ")[1], o.hyps[1].params) == []
+
+
+def test_a_hunch_gets_one_plan_change_at_directive_time_even_when_the_seed_runs_first(tmp_path):
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"gelu": "approx"}, 1.02), default="no json"), main_iters=1, branch_iters=2, help_deadline_s=0.3)
+    run_with(o, [(1, "speed", "Try the tanh approximate GELU.")])
+    texts = [e["text"] for e in of(o, "plan_change") if e["help"] == "d1"]
+    assert texts == [("Because the Speed lens sent \"Try the tanh approximate GELU.\", I am testing it after the scheduled FP16 variant on speed, judged against "
+                     "max error under 2.0e-2, the Speed lens bound. This is not a retest, nothing in the session has tested it yet, so the agent turns it "
+                     "into the next hypothesis on that branch.")]
+    hyps = [e["hypothesis"] for e in of(o, "hypothesis_proposed")]
+    assert hyps[1]["params"]["acc"] == "fp16" and hyps[2]["note"].startswith("Hunch from the Speed lens in directive d1") and o.hunches["d1"] == "H2"

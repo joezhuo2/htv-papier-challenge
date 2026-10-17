@@ -82,6 +82,19 @@ class Hyp:
         return d | ({"note": self.note} if self.note else {})
 
 
+@dataclass
+class Hint:
+    """What a human asked a branch to test next: a bound (delta None), a concrete change (delta), or a vague one ({}).
+    params is set when the change was built in code at the moment it arrived, earlier is the run that tested it before."""
+    text: str
+    cite: str
+    ref: str  # the directive or help id
+    delta: dict | None
+    params: Params | None = None
+    earlier: "Hyp | None" = None
+    base: Params | None = None  # the current best params the change was applied to
+
+
 def open_help(x):
     return not (x["answered"] or x["expired"] or x["cancelled"])
 
@@ -289,7 +302,7 @@ class Orchestrator:
         self.retry = threading.Event()
         self.applied = threading.Event()  # set by the listener when a command arrived, so an idle session stays open
         self.helps: dict[str, dict] = {}  # id -> {help, branch, t, answered, expired}
-        self.hints: dict[str, tuple[str, str, str]] = {}  # branch -> (suggestion, note for the hypothesis, help or directive id)
+        self.hints: dict[str, Hint] = {}  # branch -> what a human asked it to test next
         self.extra: dict[str, int] = {}  # branch -> iterations added by a help answer
         self.summaries: dict[str, dict] = {}
         self.summarized: set[str] = set()  # hypotheses whose latest verdict has a summary
@@ -298,6 +311,7 @@ class Orchestrator:
         self.conflicts = 0
         self.hybrid: dict | None = None  # {branches, params, base, text, t, state: proposed, approved, expired, done}
         self.skipped = ""  # the last logged reason no hybrid could be proposed
+        self.hunches: dict[str, str] = {}  # directive or help id of a concrete hunch -> the hypothesis that tested it, or "not run: <why>"
         self.reserved: set[str] = set()  # slots past the cap: directive ids of hunches still to test, and "hybrid" once approved
         self.lock = threading.RLock()
         self.gpu = threading.Lock()
@@ -366,7 +380,7 @@ class Orchestrator:
 
     def owed(self):
         """Branches holding a reserved slot: a presenter hunch still to test, or the approved hybrid."""
-        out = {bid for bid, hint in self.hints.items() if hint[2] in self.reserved}
+        out = {bid for bid, hint in self.hints.items() if hint.ref in self.reserved}
         return out | ({"merge"} if "hybrid" in self.reserved else set())
 
     def capped(self):
@@ -374,9 +388,9 @@ class Orchestrator:
 
     def spend(self, h, hint):
         """Marks h as the hypothesis that used its hint's reserved slot, if the hint had one."""
-        if h and hint and hint[2] in self.reserved:
+        if h and hint and hint.ref in self.reserved:
             h.bonus = True
-            self.reserved.discard(hint[2])
+            self.reserved.discard(hint.ref)
 
     def run(self):
         with self.lock:
@@ -546,7 +560,7 @@ class Orchestrator:
         if self.capped() or self.stopped:
             return
         lens = d["lens"].capitalize()
-        self.hints.setdefault(b.id, (d["text"], f"Tested under the {lens} lens bound set by {d['id']}", d["id"], None))
+        self.hints.setdefault(b.id, Hint(d["text"], f"Tested under the {lens} lens bound set by {d['id']}", d["id"], None))
         bound = self.bounds(b.lens)
         self.log.emit("plan_change", help=d["id"], text=f"{d['id']} sets a bound, not a specific change, so the next hypotheses on {b.id} are chosen by the agent "
                                                        f"and judged against max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound.")
@@ -557,45 +571,73 @@ class Orchestrator:
                 and any(getattr(self.prior(x)[0], k) != v for k, v in delta.items())]
         return hits[-1] if hits else None
 
-    def earlier_text(self, delta):
-        e = delta and self.tested(delta)
-        if not e:
-            return ""
-        sp = f", {e.speedup:.2f}x vs {'naive' if e.ref == 'naive' else 'its parent'}" if e.speedup else ""
-        return (f" It was already tested in {e.id} ({e.judgment.verdict}{sp}) on {e.params.block_m}x{e.params.block_n}x{e.params.block_k} tiles, "
-                "so this is a retest on the current best tiles.")
+    def plan(self, b, delta):
+        """(params, earlier, why_not) for a concrete hunch on b: its change applied to b's current best params, built in code. earlier is
+        the run that tested the change before, why_not says why it cannot run."""
+        start = self.start_point(b.id)[0]
+        e = self.tested(delta)
+        try:
+            p = fit_stages(replace(start, **delta))
+        except ValueError as err:
+            return None, e, f"it names an invalid value ({err})"
+        if acc_per_thread(p) > ACC_LIMIT[p.acc]:
+            return None, e, (f"on {b.id}'s current best it gives {params_text(p)}, which puts {acc_per_thread(p)} accumulator elements on each thread, "
+                             f"over the {ACC_LIMIT[p.acc]} register limit")
+        if p == start:
+            return None, e, f"{b.id}'s current best, {params_text(start)}, already has it"
+        ran = next((x for x in self.hyps if x.params == p), None)
+        if ran:
+            return None, e, f"that exact config, {params_text(p)}, already ran as {ran.id} on {ran.branch} ({ran.judgment.verdict if ran.judgment else 'running'})"
+        return p, e, None
 
     def hunch(self, b, text, cite, ref, lens, delta):
-        """A typed hunch is the next hypothesis on its branch, in a reserved slot that the cap does not count, or gets a plan_change
-        saying why not. Never dropped silently."""
+        """A typed hunch gets exactly one plan_change, when it arrives: whether it is a retest, and either what will run (built in code on
+        the branch's current best params, in a reserved slot the cap does not count) or why it will not. Never dropped silently."""
+        quoted = f"Because the {lens.capitalize()} lens sent \"{text[:120]}\""
         if self.stopped:
-            self.log.emit("plan_change", help=ref, text=f"Not testing \"{text[:120]}\" because the session was stopped.")
+            self.log.emit("plan_change", help=ref, text=f"{quoted}, nothing is tested: the session was stopped.")
             return
-        self.hints[b.id] = (text, cite, ref, delta)
+        p, e, why = self.plan(b, delta) if delta else (None, None, None)
+        if not e:
+            p, why = None, None  # a first test goes to the model, which can fit the rest of the config around the change
+        sp = e and (f", {e.speedup:.2f}x vs {'naive' if e.ref == 'naive' else 'its parent'}" if e.speedup else "")
+        status = (f"This is a retest: it was already tested in {e.id} ({e.judgment.verdict}{sp}) on {e.params.block_m}x{e.params.block_n}x{e.params.block_k} tiles"
+                  if e else "This is not a retest, nothing in the session has tested it yet")
+        if why:
+            self.hunches[ref] = f"not run: {why}"
+            self.log.emit("plan_change", help=ref, text=f"{quoted}, I am not testing it because {why}. {status}.")
+            return
+        self.hints[b.id] = Hint(text, f"{cite}, a retest of {e.id} on the current best tiles" if e else cite, ref, delta, p, e, self.start_point(b.id)[0])
         self.reserved.add(ref)
-        when = "next" if b.status == "running" else f"as soon as {b.id} resumes"
+        tried = [h for h in self.hyps if self.branches[h.branch].lens == "speed"]
+        when = ("after the scheduled FP16 variant" if b.lens == "speed" and not tried and self.seed(b, {json.dumps(h.params.dict(), sort_keys=True) for h in self.hyps}) and not self.base_capped()
+                else "next" if b.status == "running" else "as soon as it resumes")
         bound = self.bounds(b.lens)
-        self.log.emit("plan_change", help=ref, text=f"Because the {lens.capitalize()} lens sent \"{text[:120]}\", I am testing it {when} on {b.id}, "
-                                                    f"judged against max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound."
-                                                    + self.earlier_text(delta))
+        start = self.start_point(b.id)[0]
+        what = (f"so the run changes only {change(start, p)} on the current best {tiles_text(start)}" if e
+                else "so the agent turns it into the next hypothesis on that branch")
+        self.log.emit("plan_change", help=ref, text=f"{quoted}, I am testing it {when} on {b.id}, judged against max error under {sci(bound['standard'])}, "
+                                                    f"the {bound_owner(bound)} bound. {status}, {what}.")
 
     def rehome_hints(self):
         for bid, hint in list(self.hints.items()):
-            text, ref = hint[0], hint[2]
+            text, ref = hint.text, hint.ref
             b = self.branches[bid]
             if b.status in ("running", "waiting_on_human"):
                 continue
             del self.hints[bid]
-            if hint[3] is None:
+            if hint.delta is None:
                 continue  # a bound applies to every branch of its lens anyway, nothing was left untested
             others = [x for x in self.branches.values() if x.lens == b.lens and x.status in ("running", "waiting_on_human")]
+            # the plan_change was logged when the hunch arrived, a move afterwards is a log line
             if others:
                 self.hints[others[-1].id] = hint
-                self.log.emit("plan_change", help=ref, text=f"{bid} closed ({b.status}) before testing \"{text[:120]}\", so I am testing it next on {others[-1].id}.")
+                self.log.emit("agent_log", text=f"{bid} closed ({b.status}) before testing \"{text[:120]}\" ({ref}), so it runs next on {others[-1].id}.")
             else:
                 self.reserved.discard(ref)
-                self.log.emit("plan_change", help=ref, text=f"{bid} closed ({b.status}) before testing \"{text[:120]}\" and no other {b.lens} branch is open. "
-                                                            "Send it again as a directive to open one.")
+                self.hunches[ref] = f"not run: {bid} closed ({b.status}) before it and no other {b.lens} branch was open"
+                self.log.emit("agent_log", text=f"{bid} closed ({b.status}) before testing \"{text[:120]}\" ({ref}) and no other {b.lens} branch is open. "
+                                                "Send it again as a directive to open one.")
 
     def reevaluate(self, d):
         """Re-judges every measured run under the bound now active on its branch, so each verdict shows the bound in force. A run that
@@ -907,9 +949,17 @@ class Orchestrator:
         else:
             if cmd["option"] == "other" and note:
                 delta = hyp.hunch_change(note) or {}
-                self.hints[b.id] = (note, f"Suggested by the {lens} lens in answer to {cmd['help']}", cmd["help"], delta)
+                p, e, why = self.plan(b, delta) if delta else (None, None, None)
+                if not e:
+                    p, why = None, None
+                cite = f"Suggested by the {lens} lens in answer to {cmd['help']}"
+                self.hints[b.id] = Hint(note, f"{cite}, a retest of {e.id} on the current best tiles" if e else cite, cmd["help"], delta, p, e,
+                                        self.start_point(b.id)[0])
                 text = (f"{late}Because the {lens} lens suggests \"{note}\", I am testing that next on {b.id} instead of more tile search, still under the active error bound."
-                        + self.earlier_text(delta))
+                        + (f" It was already tested in {e.id} ({e.judgment.verdict}), so this is a retest on the current best tiles." if e else "")
+                        + (f" As a fixed change it cannot run ({why}), so the agent picks the closest valid version." if why else ""))
+                if why:
+                    self.hints[b.id].params = None
             else:
                 text = f"{late}Because the {lens} lens wants more tile search, I am giving {b.id} two more iterations."
             if not x["expired"]:
@@ -968,24 +1018,19 @@ class Orchestrator:
         # the seeded FP16 variant is the first Speed lens hypothesis, ahead of a pending hunch
         seed = None if self.base_capped() else self.seed(b, tried_all)
         if seed:
-            if b.id in self.hints and self.hints[b.id][3] is not None:
-                self.log.emit("plan_change", help=self.hints[b.id][2], text=f"The scheduled FP16 variant runs first on {b.id}, "
-                                                                            f"then \"{self.hints[b.id][0][:120]}\" is the next hypothesis there.")
             return seed
         hint = self.hints.pop(b.id, None)
-        if hint and hint[3] and self.tested(hint[3]):
-            retest = self.retest(b, start, hint, tried_all)
-            if retest:
-                self.spend(retest, hint)
-                return retest
-            self.reserved.discard(hint[2])
+        if hint and hint.params:
+            built = self.built(b, hint)
+            if built:
+                return built
             hint = None
 
         directives = [d for d in self.directives if b.lens in ("both", d["lens"])]
-        planned = facet(start, replace(start, **{k: v for k, v in hint[3].items() if k in start.dict()})) if hint and hint[3] else None
+        planned = facet(start, replace(start, **{k: v for k, v in hint.delta.items() if k in start.dict()})) if hint and hint.delta else None
         notes = self.papiers(planned or QUERIES[b.lens])
         messages = hyp.prompt(b.dict(), directives, {"params": start.dict(), "metrics": metrics.contract()}, self.ledger(), self.avoid,
-                              ([f"Suggestion from a human lens owner, test this next: {hint[0]}"] if hint and hint[3] is not None else [])
+                              ([f"Suggestion from a human lens owner, test this next: {hint.text}"] if hint and hint.delta is not None else [])
                               + [f"Papiers {n['id']} ({n['title']}): {n['excerpt']}" for n in notes], self.bounds(b.lens)["standard"], self.headroom)
         why, first = "", ""
         for attempt in range(3):
@@ -1000,7 +1045,7 @@ class Orchestrator:
                 h, why = None, refused
                 self.log.emit("agent_log", text=f"Refused a proposal on {b.id}: {why}.")
             if h:
-                cite = hint[1] if hint else None
+                cite = hint.cite if hint else None
                 claim = h["claim"]
                 wrong = hyp.mismatches(claim, h["params"])
                 if h["adjusted"] or wrong:
@@ -1011,16 +1056,19 @@ class Orchestrator:
                     cite = f"{cite}. {fix}" if cite else fix
                 new = self.new_hyp(b, claim, h["prediction"], h["params"], cite)
                 self.spend(new, hint)
-                if hint and hint[3] is not None and first:
-                    self.log.emit("plan_change", help=hint[2], text=f"My first reading of \"{hint[0][:120]}\" was not testable ({first}), so {new.id} tests "
-                                                                    f"the closest valid version: {change(start, new.params)}.")
+                if hint and hint.delta is not None:
+                    self.hunches[hint.ref] = new.id
+                    if first:
+                        self.log.emit("agent_log", text=f"My first reading of \"{hint.text[:120]}\" ({hint.ref}) was not testable ({first}), so {new.id} tests "
+                                                        f"the closest valid version: {change(start, new.params)}.")
                 return new
             first = first or why
             messages = messages + [{"role": "assistant", "content": text}, {"role": "user", "content": f"Invalid: {why}. Reply again with only the JSON object."}]
         if hint:
-            self.reserved.discard(hint[2])
-        if hint and hint[3] is not None:
-            self.log.emit("plan_change", help=hint[2], text=f"I could not turn \"{hint[0][:120]}\" into a valid configuration on {b.id} ({why}), so it is not tested.")
+            self.reserved.discard(hint.ref)
+        if hint and hint.delta is not None:
+            self.hunches[hint.ref] = f"not run: no valid configuration ({why})"
+            self.log.emit("agent_log", text=f"I could not turn \"{hint.text[:120]}\" ({hint.ref}) into a valid configuration on {b.id} ({why}), so it is not tested.")
         self.log.emit("agent_log", text=f"No valid hypothesis for branch {b.id} after 3 attempts ({why}). Closing the branch.")
         return None
 
@@ -1072,31 +1120,21 @@ class Orchestrator:
                         f"cite it and say why this case differs")
         return None
 
-    def retest(self, b, start, hint, tried_all):
-        """A hunch tested earlier is rerun as that change on this branch's current best params, built in code like the seed."""
-        e = self.tested(hint[3])
-        try:
-            p = fit_stages(replace(start, **hint[3]))
-        except ValueError as err:
-            self.log.emit("plan_change", help=hint[2], text=f"\"{hint[0][:120]}\" names an invalid value ({err}), so it is not retested.")
-            return None
-        if acc_per_thread(p) > ACC_LIMIT[p.acc]:
-            self.log.emit("plan_change", help=hint[2], text=f"\"{hint[0][:120]}\" on {b.id}'s current best gives {params_text(p)}, which puts {acc_per_thread(p)} "
-                                                           f"accumulator elements on each thread, over the {ACC_LIMIT[p.acc]} register limit, so it is not retested.")
-            return None
-        if p == start or json.dumps(p.dict(), sort_keys=True) in tried_all:
-            ran = next((x for x in self.hyps if x.params == p), None)
-            why = (f"that exact config, {params_text(p)}, already ran as {ran.id} on {ran.branch} ({ran.judgment.verdict})" if ran
-                   else f"{b.id}'s current best already has {ruled_out(p, self.prior(e)[0])}")
-            self.log.emit("plan_change", help=hint[2], text=f"\"{hint[0][:120]}\" is not retested because {why}."
-                                                           + (f" The hunch was last tested in {e.id} ({e.judgment.verdict})." if e is not ran else ""))
+    def built(self, b, hint):
+        """A retest planned in code when its hunch arrived: the hunch's change on the params named in its plan_change."""
+        ran = next((x for x in self.hyps if x.params == hint.params), None)
+        if ran:
+            self.reserved.discard(hint.ref)
+            self.hunches[hint.ref] = f"not run: {ran.id} ran the same config first"
+            self.log.emit("agent_log", text=f"\"{hint.text[:120]}\" ({hint.ref}) is not run: {ran.id} on {ran.branch} ran {params_text(hint.params)} first.")
             return None
         bound = self.bounds(b.lens)
-        claim = (f"Retest of {e.id}: {change(start, p)} on the current best {tiles_text(start)} is at least 1.02x faster than the same config without it, "
-                 f"with standard max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound.")
-        h = self.new_hyp(b, claim, {"min_speedup": 1.02, "vs": "parent_best", "max_error": bound["standard"]}, p,
-                         f"{hint[1]}, a retest of {e.id} on the current best tiles")
-        h.base = start
+        claim = (f"Retest of {hint.earlier.id}: {change(hint.base, hint.params)} on the current best {tiles_text(hint.base)} is at least 1.02x faster than the same config "
+                 f"without it, with standard max error under {sci(bound['standard'])}, the {bound_owner(bound)} bound.")
+        h = self.new_hyp(b, claim, {"min_speedup": 1.02, "vs": "parent_best", "max_error": bound["standard"]}, hint.params, hint.cite)
+        h.base = hint.base
+        self.spend(h, hint)
+        self.hunches[hint.ref] = h.id
         return h
 
     def correct_runs(self, branches):
