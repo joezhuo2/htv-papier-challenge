@@ -11,6 +11,7 @@ interface Props {
   now: number
   paused: boolean
   ended: boolean
+  finished: boolean
   speed: number
   compression?: { from: number; to: number }
   chapters: Chapter[]
@@ -28,11 +29,17 @@ interface Props {
   onStop: () => void
   onSave: () => void
   onNewSession: () => void
+  onWrite: () => void
   live?: { started: boolean; finished: boolean; stopping: boolean }
 }
 
 export function TopBar(p: Props) {
   const replay = p.mode !== 'live'
+  const write = p.finished ? (
+    <button onClick={p.onWrite} title="Preview the final verdicts as Papiers highlights, write only the ones you approve" data-testid="write-papiers">
+      Write to Papiers
+    </button>
+  ) : null
   const modes: Mode[] = p.judging ? ['replay', 'live'] : ['mock', 'live']
   const pill = p.mode === 'live' ? (p.recording ? 'live, recording' : 'live') : p.mode === 'replay' ? 'recorded run' : 'mock'
   return (
@@ -72,19 +79,21 @@ export function TopBar(p: Props) {
           ) : (
             <button onClick={p.onPause}>pause</button>
           )}
-          <button onClick={p.onPrev} disabled={!p.canPrev} title="Left arrow">prev</button>
-          <button onClick={p.onStep} disabled={p.ended} title="Right arrow">step</button>
+          <button className="icon" onClick={p.onPrev} disabled={!p.canPrev} title="Previous (Left arrow)" aria-label="Previous">&lt;</button>
+          <button className="icon" onClick={p.onStep} disabled={p.ended} title="Step (Right arrow)" aria-label="Step">&gt;</button>
           {[1, 2, 4].map(s => (
             <button key={s} aria-pressed={p.speed === s} onClick={() => p.onSpeed(s)}>{s}x</button>
           ))}
           <button aria-pressed={p.autoPause} onClick={() => p.onAutoPause(!p.autoPause)} title="Pause at each chapter">auto-pause</button>
           <button onClick={p.onRestart}>restart</button>
+          {write}
         </div>
       ) : (
         <div className="controls" role="group" aria-label="live controls">
           <button onClick={p.onSave} title={p.live?.finished ? 'Download the whole session as a JSONL replay' : 'The session has not finished: this saves only the events so far, without session_finished'}>
             {p.live?.finished ? 'save as replay' : 'save partial replay'}
           </button>
+          {write}
           <button onClick={p.onStop} disabled={!p.live?.started || p.live.finished || p.live.stopping} title="Finish the session with what is logged so far">
             {p.live?.stopping && !p.live.finished ? 'stopping...' : 'stop'}
           </button>

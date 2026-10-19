@@ -70,7 +70,7 @@ describe('steering and feed', () => {
     fireEvent.keyDown(window, { key: ' ' })
     for (let i = 0; i < 8; i++) fireEvent.keyDown(window, { key: 'ArrowRight' })
     expect(screen.getAllByTestId('summary-card')).toHaveLength(1)
-    fireEvent.click(screen.getByRole('button', { name: 'prev' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Previous' }))
     expect(screen.getAllByTestId('summary-card')).toHaveLength(1)
     fireEvent.keyDown(window, { key: 'ArrowLeft' })
     expect(screen.queryByTestId('summary-card')).toBeNull()

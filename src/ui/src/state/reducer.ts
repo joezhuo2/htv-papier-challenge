@@ -1,4 +1,4 @@
-import type { Bound, Branch, Check, DemoEvent, Directive, FinalReport, HelpRequest, Hypothesis, LedgerEntry, Lens, Metrics, PapiersNote, Params, PostMortem, Report, SessionBest, Summary, Verdict } from '@contract/types'
+import type { Bound, Branch, Check, DemoEvent, Directive, FinalReport, HelpRequest, Hypothesis, LedgerEntry, Lens, Metrics, PapiersNote, Params, PostMortem, PriorVerdict, Report, SessionBest, Summary, Verdict } from '@contract/types'
 
 export interface VerdictView { verdict: Verdict; provisional: boolean; reason: string; checks: Check[]; t: number; bound: Bound }
 
@@ -80,6 +80,7 @@ export interface View {
   ledger?: LedgerEntry[]
   best?: SessionBest
   final?: FinalReport
+  prior?: { count: number; items: PriorVerdict[]; error?: string }
   lens: Lens
   selected: Selection
 }
@@ -136,6 +137,10 @@ export function reduce(prev: View, a: Action): View {
         feed: [...v.feed, { kind: 'note', note, query: e.query, t: e.t, mock }],
       }
     }
+    case 'prior_verdicts':
+      return { ...v, prior: { count: e.count, items: e.items, error: e.error } }
+    case 'papiers_written':
+      return v
     case 'directive_added':
       return { ...v, directives: [...v.directives, { ...e.directive, t: e.t, mock }] }
     case 'conflict_detected': {

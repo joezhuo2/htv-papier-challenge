@@ -13,7 +13,7 @@ describe('Papiers panel', () => {
     render(<PapiersPanel view={fold(demoScript.slice(0, 3))} />)
     const panel = screen.getByTestId('papiers-panel')
     expect(within(panel).getByText('Triton matmul tiling notes')).toBeTruthy()
-    expect(within(panel).getByText('read-only')).toBeTruthy()
+    expect(within(panel).getByText('read, write on approval')).toBeTruthy()
     expect(fetch).not.toHaveBeenCalled()
     fireEvent.change(screen.getByLabelText('Search your library'), { target: { value: 'FP16 accumulation' } })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Search' })) })

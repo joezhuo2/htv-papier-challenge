@@ -92,9 +92,14 @@ export function PapiersPanel({ view }: { view: View }) {
     <div className="section" data-testid="papiers-panel">
       <div className="section-head">
         <h2>Papiers</h2>
-        <span className="tag">read-only</span>
+        <span className="tag">read, write on approval</span>
       </div>
       <p className="small muted">Read by the agent this session</p>
+      {view.prior ? (
+        <p className="small muted" data-testid="prior-count" title={view.prior.error ?? view.prior.items.map(p => `${p.run}: ${p.verdict}`).join('\n')}>
+          Prior verdicts read: {view.prior.count}{view.prior.error ? ` (${view.prior.error})` : ''}
+        </p>
+      ) : null}
       {view.reads.length === 0 ? <p className="empty">Nothing read yet.</p> : null}
       {view.reads.map((r, i) => {
         const first = r.note && view.reads.findIndex(x => x.note?.id === r.note!.id) === i

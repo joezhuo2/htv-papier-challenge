@@ -31,7 +31,7 @@ describe('Papiers reads in the event log', () => {
     expect(reads[1].textContent).toContain('hl_2')
     expect(reads.every(r => r.classList.contains('flash'))).toBe(true)
     expect(reads[0].id).toBe('papiers-cnv_1')
-    expect(within(screen.getByTestId('papiers-panel')).getByText('read-only')).toBeTruthy()
+    expect(within(screen.getByTestId('papiers-panel')).getByText('read, write on approval')).toBeTruthy()
   })
 
   it('shows the answer of a conversation with a cleaned title and a copyable full id', async () => {

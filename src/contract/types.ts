@@ -97,7 +97,19 @@ export interface PapiersNote {
   document_title?: string
   highlight_text?: string
   annotation?: string // the user's own words on a highlight
+  // where the passage sits, read from Papiers for a later write-back; absent in older logs and for conversations and notes
+  doc_id?: string
+  page?: number
+  family?: string // the document's source family: pdf, web_clip, tweet, unknown
+  anchor?: string // the passage text exactly as read, before LaTeX stripping
+  truncated?: true
 }
+
+// a verdict an earlier session wrote to Papiers, parsed from its [RWR] note: context for the agent, never evidence
+export interface PriorVerdict { id: string; doc_id?: string; document_title?: string; run: string; verdict: string; measured: string; bound: string; reason: string }
+
+// one approved write-back item: written only after the CLI exited 0
+export interface WriteResult { id: string; status: 'written' | 'already_written' | 'failed'; error?: string }
 
 export interface PostMortem {
   hypothesis: string
@@ -183,6 +195,8 @@ export type DemoEvent =
   | Ev<'session_started', { baselines: { eager: Metrics; naive: Metrics }; branch: Branch }>
   // one event per read: the search query and one returned note, highlight or conversation, or no note when the search returned nothing
   | Ev<'papiers_context', { query?: string; note?: PapiersNote }>
+  // once at session start: the [RWR] notes earlier sessions wrote, count 0 when none was found, error when Papiers could not be read
+  | Ev<'prior_verdicts', { count: number; items: PriorVerdict[]; error?: string }>
   | Ev<'directive_added', { directive: Directive }>
   | Ev<'conflict_detected', { directives: string[]; reason: string }>
   | Ev<'branch_created', { branch: Branch; reason?: string }>
@@ -199,12 +213,14 @@ export type DemoEvent =
   | Ev<'help_cancelled', { help: string; reason: string }>
   | Ev<'plan_change', { help: string; text: string }>
   | Ev<'agent_log', { text: string }>
-  // Papiers is read-only, findings are exported as local files for manual import
+  // findings are exported as local Markdown files for manual import, whatever is written back to Papiers
   | Ev<'findings_exported', { items: { kind: 'summary' | 'negative_result' | 'ledger' | 'answer'; title: string; file: string }[] }>
   | Ev<'report_ready', { report: Report }>
   | Ev<'hybrid_proposed', { branches: string[]; text: string }>
   | Ev<'final_report', { report: FinalReport }>
   | Ev<'session_finished', { ledger: LedgerEntry[]; best: SessionBest }>
+  // after session_finished, once per approved Apply in the write-back preview
+  | Ev<'papiers_written', { results: WriteResult[] }>
   // a visible failure state: the loop waits for a retry command (or retries by itself after retry_in_s) instead of looking frozen
   | Ev<'agent_error', { kind: 'llm_timeout' | 'llm_error' | 'harness_timeout'; text: string; branch?: string; retry_in_s?: number }>
 

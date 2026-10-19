@@ -92,6 +92,17 @@ p { margin: 0; }
 .topbar .spacer { flex: 1; }
 .controls { display: flex; gap: 4px; align-items: center; font-size: 12px; }
 .controls button { padding: 2px 8px; font-size: 12px; }
+.controls button.icon { width: 28px; padding: 2px 0; font-family: var(--mono); }
+
+.modal-backdrop { position: fixed; inset: 0; z-index: 20; background: color-mix(in srgb, var(--ink) 20%, transparent); display: flex; align-items: flex-start; justify-content: center; padding: 8vh 16px; }
+.modal { width: 100%; max-width: 760px; max-height: 84vh; overflow: auto; display: flex; flex-direction: column; gap: 8px; border-color: var(--ink); }
+.modal .row { align-items: center; }
+.modal .spacer { flex: 1; }
+.modal h2 { margin: 0; }
+.write-list { list-style: none; padding-left: 0; display: flex; flex-direction: column; gap: 6px; }
+.write-item { border-top: 1px solid var(--border); padding-top: 6px; }
+.swatch-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; line-height: 18px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; border: 1px solid var(--ink); }
 
 .pill {
   display: inline-flex;

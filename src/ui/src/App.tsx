@@ -16,6 +16,7 @@ import { PostMortemCard } from './components/PostMortem'
 import { Banner } from './components/Banner'
 import { PapiersPanel } from './components/PapiersPanel'
 import { Ledger, ReportView } from './components/Tier2'
+import { WriteModal } from './components/WriteModal'
 import { clock, latestRun, runFor, sci } from './state/derive'
 
 const typing = (el: EventTarget | null) => el instanceof HTMLElement && el.closest('input, textarea, select, [contenteditable]') !== null
@@ -24,6 +25,7 @@ export function App({ source }: { source: Source }) {
   const s = useSession(source)
   const { view, dispatch, controls } = s
   const [logOpen, setLogOpen] = useState(false)
+  const [writing, setWriting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const newSession = async () => {
     if (view.started && !view.finished && !window.confirm('Stop this session and start a new one?')) return
@@ -53,6 +55,10 @@ export function App({ source }: { source: Source }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return
+      if (writing) {
+        if (e.key === 'Escape') setWriting(false)
+        return
+      }
       if (e.key === '1') setLens('speed')
       else if (e.key === '2') setLens('precision')
       else if (e.key === 'Escape') dispatch({ type: 'ui/select', selected: {} })
@@ -93,7 +99,8 @@ export function App({ source }: { source: Source }) {
   return (
     <div className="app" data-lens={view.lens}>
       <TopBar
-        mode={source.mode} file={s.file} mock={view.mock} recording={view.log.some(l => l.text.startsWith('Recording mode'))} judging={JUDGING} now={s.now} paused={s.paused} ended={s.ended} speed={s.speed}
+        mode={source.mode} file={s.file} mock={view.mock} recording={view.log.some(l => l.text.startsWith('Recording mode'))} judging={JUDGING} now={s.now} paused={s.paused} ended={s.ended}
+        finished={view.finished} onWrite={() => setWriting(true)} speed={s.speed}
         compression={s.compression} chapters={marks} autoPause={s.autoPause}
         onPause={controls.pause} onResume={controls.resume} onStep={controls.step}
         onPrev={controls.prev} canPrev={s.index > 0} onMode={m => { window.location.search = `?mode=${m}` }}
@@ -162,6 +169,7 @@ export function App({ source }: { source: Source }) {
           <Ledger view={view} />
         </aside>
       </main>
+      {writing ? <WriteModal mode={source.mode} file={s.file} onClose={() => setWriting(false)} /> : null}
       <div className="drawer">
         <button aria-expanded={logOpen} onClick={() => setLogOpen(o => !o)}>
           Agent log ({view.log.length}) {logOpen ? 'hide' : 'show'}
