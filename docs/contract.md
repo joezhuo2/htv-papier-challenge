@@ -70,3 +70,10 @@
 38. `session_finished.best` and `final_report.best` `vs_naive` and `vs_eager` are the run's same-window speedups (`run_finished.run.metrics.speedups`), matching its verdict card. Only when a run has none are they the session baselines' latency over the run's, with `cross_window: true`.
 39. In recording mode the session ends `END_WAIT_S` (15 s) after the budget is spent, or after both lenses have spoken with nothing runnable or waiting, with the agent_log line "No directive in 15 s and the 8 hypothesis budget is spent, so the session ends." in the first case.
 
+
+## Changes made for the cross-session repeat guard
+
+40. `hypothesis_proposed.hypothesis` gains optional `base` (the config the change is measured from) and `rounds` (timing rounds of a retest, absent for the default 7). The Papiers note writer reads them, so an older log writes the older note without a fingerprint.
+41. `prior_verdicts` gains optional `section` (the exact prior-verdicts text sent to the model, empty when there is none), `branch` and `ignored`. It is logged once at start and again, with the `branch`, only when a branch's bounds change the text. Each item gains optional `fp: {params, base, kernel, title, bounds: {std, adv}, rounds}`, absent for notes written before fingerprints.
+42. New event `prior_refused { branch, prior, text, seed? }`: the agent's proposal repeated a prior verdict's fingerprint under the same bounds and was refused before it ran, `seed` marks the harness-seeded FP16 variant being skipped. New event `prior_duplicate { help, branch, prior, text }`: a human's hunch (`help` is its directive id) repeats one, nothing runs until a `confirm_prior` command, and the hunch's next `plan_change` (run or skipped) closes the card.
+43. New command `{ type: 'confirm_prior', help, run }`, and `start` accepts `ignore_prior: true` to turn off the read-back and the guard for the session. A hypothesis JSON may carry `retest_rounds` (an integer from 8 to 14) to rerun an inconclusive prior verdict with more rounds.

@@ -14,7 +14,7 @@ Docs: wiki.papiers.ai (full text at wiki.papiers.ai/llms-full.txt). Papiers is o
 
 ## Write-back
 
-From CLI 0.1.6, `papiers highlight <doc_id> --pages N --start "first words" [--end "last words"] [--note TEXT] [--color HEX]` creates a highlight (no `--pages` for a webpage) with a write-permission token. The war room uses it only for final verdicts a human approves in the Write to Papiers preview, with an `[RWR]` note, and later sessions read those notes back as prior verdicts that are never evidence (see `docs/architecture.md`). The Markdown export below still runs. The notes below are from before 0.1.6.
+From CLI 0.1.6, `papiers highlight <doc_id> --pages N --start "first words" [--end "last words"] [--note TEXT] [--color HEX]` creates a highlight (no `--pages` for a webpage) with a write-permission token. The war room uses it only for final verdicts a human approves in the Write to Papiers preview, with an `[RWR]` note, and later sessions read those notes back as prior verdicts that are never evidence, and refuse to repeat an experiment a note's fingerprint (params, base config, bounds, rounds) says was already run (see `docs/architecture.md`). The Markdown export below still runs. The notes below are from before 0.1.6.
 
 Before 0.1.6 the CLI could not import, edit, highlight, tag or publish. The challenge page says agents can write findings back, but no path exists in the docs, and the workshop repo does not use Papiers (it keeps `results.tsv` and `runs/` locally). Plan:
 
