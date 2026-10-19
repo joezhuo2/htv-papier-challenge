@@ -1,6 +1,6 @@
 # Papiers findings
 
-Docs: wiki.papiers.ai (full text at wiki.papiers.ai/llms-full.txt). Papiers is optional for the challenge, and the CLI is read-only.
+Docs: wiki.papiers.ai (full text at wiki.papiers.ai/llms-full.txt). Papiers is optional for the challenge. The CLI reads, and from 0.1.6 it can also create highlights.
 
 ## CLI
 
@@ -12,13 +12,15 @@ Docs: wiki.papiers.ai (full text at wiki.papiers.ai/llms-full.txt). Papiers is o
 - The npm package ships `skills/papiers-research/SKILL.md`, which weights highlights, notes and conversations above saved but unread items. Point the agent at it.
 - Limits: 200,000 characters per read item, 100 IDs per request, 25 filters. Exit codes 0 success, 1 failure, 2 invalid usage.
 
-## No write-back
+## Write-back
 
-The CLI cannot import, edit, highlight, tag or publish. The challenge page says agents can write findings back, but no path exists in the docs, and the workshop repo does not use Papiers (it keeps `results.tsv` and `runs/` locally). Plan:
+From CLI 0.1.6, `papiers highlight <doc_id> --pages N --start "first words" [--end "last words"] [--note TEXT] [--color HEX]` creates a highlight (no `--pages` for a webpage) with a write-permission token. The war room uses it only for final verdicts a human approves in the Write to Papiers preview, with an `[RWR]` note, and later sessions read those notes back as prior verdicts that are never evidence (see `docs/architecture.md`). The Markdown export below still runs. The notes below are from before 0.1.6.
+
+Before 0.1.6 the CLI could not import, edit, highlight, tag or publish. The challenge page says agents can write findings back, but no path exists in the docs, and the workshop repo does not use Papiers (it keeps `results.tsv` and `runs/` locally). Plan:
 
 - Read context through the CLI before each hypothesis and cite the note id in the hypothesis.
 - Export branch summaries and the ledger as files in a local export folder (PDF or Markdown). Joe imports them manually (Ctrl+N, drop a PDF or folder) or pastes them into a Note.
-- Label events and UI as "exported", never "written". Do not claim automatic write-back in the pitch.
+- Label the Markdown files "exported". Say "written" only for a write-back item the CLI reported as successful. Do not claim automatic write-back in the pitch.
 - Ask the Papiers team at the hackathon whether a write path exists.
 
 ## Adding papers (desktop app, Ctrl+N or +)

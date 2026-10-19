@@ -33,6 +33,6 @@ Tier 1 by Saturday 9pm: harness, loop with programmatic verdicts, lens tabs, dir
 
 ## Overrides to war-room-plan.md
 
-- Papiers has no write-back through the CLI, so findings are exported for manual import (see `papiers.md`). Plan Section 11 says otherwise. The mock event is `findings_exported` and carries the exported file name.
+- Findings are exported as Markdown for manual import (see `papiers.md`); the mock event is `findings_exported` and carries the exported file name. From CLI 0.1.6 final verdicts can also be written back as highlights, after a run, only for items a human approves, only for verdicts citing a stored passage, never from a replay or mock log, and read back in later sessions as context that is never evidence.
 - UI is React with Vite, not the plain page suggested in plan Sections 12 and 19.
 - Demo is replay based, no recording hour on Saturday, and no re-record step on Sunday.

@@ -55,4 +55,4 @@ OpenAI compatible APIs, keys in a gitignored `.env` (`GEMINI_API_KEY`, `NVIDIA_A
 - Inputs are scaled so outputs are O(1), and error is measured against an FP32 reference. If the baseline cannot meet the bound, tell me and propose relative error instead of loosening the threshold silently.
 - Every metric shown in the UI, the video, or the writeup comes from a real logged run. Nothing is hardcoded for the demo.
 - The failure path (an aggressive low-precision hypothesis that the agent itself rejects with a post-mortem) must be reproducible.
-- Papiers is used for reading notes before hypotheses. Its CLI is read-only, so findings are exported as Markdown files for manual import (see `decisions.md`). Keep a local log as the source of truth.
+- Papiers is used for reading notes before hypotheses. Findings are exported as Markdown files for manual import (see `decisions.md`), and final verdicts can be written back as `[RWR]` highlights only on a human's approval after a run finishes. `[RWR]` notes are never accepted as evidence. Keep a local log as the source of truth.

@@ -118,5 +118,5 @@ Gemini is used (both Gemini models above). NVIDIA NIM is the last fallback for h
 ## For the pitch and the writeup
 
 - Quote 2.75x vs naive and 1.03x vs eager for the best FP32 config, with eager failing the 1e-3 gate for the reason above. The story is the process, not a large win over eager.
-- Disclose: one person plays both lenses; the FP16 opener on the Speed lens is harness-seeded and says so in its note; error bounds are lens-specific and set in code; Papiers is read-only, findings are exported as files; replays compress idle gaps and say so.
+- Disclose: one person plays both lenses; the FP16 opener on the Speed lens is harness-seeded and says so in its note; error bounds are lens-specific and set in code; findings are exported as Markdown files, and Papiers write-back happens only for verdicts a human approves after a live run; replays compress idle gaps and say so.
 - The WSL GPU passthrough dropped twice today (`nvidia-smi` fails with "Failed to initialize NVML"). `wsl --shutdown` from Windows brings it back. Check `nvidia-smi` before recording or demoing live.

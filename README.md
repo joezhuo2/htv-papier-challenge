@@ -37,7 +37,7 @@ The findings exported from this run are in [docs/examples/exports](docs/examples
 
 ## Status
 
-Working today: the benchmark harness, the agent loop with code computed verdicts, lens directives with lens-specific error bounds, branching and conflict detection, a hybrid step that proposes a merge when two lenses both find gains and otherwise declines with a logged reason, post-mortems with an error versus K sweep, help requests with a deadline and default, read-only Papiers context, findings export as Markdown files for manual import (the Papiers CLI is read-only today, so write-back is pending, not working), the FastAPI WebSocket server, and the React war room UI (mock, recorded replay, and live). Every number below comes from a logged run on the build machine. Final numbers come from the recorded demo session, so treat anything not in a session log as provisional.
+Working today: the benchmark harness, the agent loop with code computed verdicts, lens directives with lens-specific error bounds, branching and conflict detection, a hybrid step that proposes a merge when two lenses both find gains and otherwise declines with a logged reason, post-mortems with an error versus K sweep, help requests with a deadline and default, Papiers context, findings export as Markdown files for manual import (unchanged), an approved write-back of final verdicts as Papiers highlights (needs the papiers CLI 0.1.6 or newer with a write-permission token, and only reports an item as written after the CLI succeeded), read-back of those verdicts in later sessions as context that is never accepted as evidence, the FastAPI WebSocket server, and the React war room UI (mock, recorded replay, and live). Every number below comes from a logged run on the build machine. Final numbers come from the recorded demo session, so treat anything not in a session log as provisional.
 
 ## How the agent decides
 
@@ -95,7 +95,7 @@ NVIDIA_API_KEY=...
 PAPIERS_TOKEN=...
 ```
 
-`FAST_MODEL` and `STRONG_MODEL` optionally override the NIM model IDs. For Papiers, install the read-only CLI with `npm install -g papiers` and check it with `papiers doctor`.
+`FAST_MODEL` and `STRONG_MODEL` optionally override the NIM model IDs. For Papiers, install the CLI with `npm install -g papiers` (0.1.6 or newer for write-back) and check it with `papiers doctor`. Reading needs a token in `PAPIERS_TOKEN`, write-back needs one with write permission. After a live session finishes, the Write to Papiers button in the top bar previews each final verdict that cites a stored passage as a highlight with an `[RWR] run <session>/<H id> | <verdict> | <measured> vs <bound> | <reason>` note (green confirmed, red rejected, yellow inconclusive or provisional), lists the skipped verdicts with their reasons, and writes only the items you check and apply (at most 20 per run, recorded in `runs/sessions/<id>/papiers-writes.json` so applying twice never duplicates). Replay and mock open the preview with Apply disabled, on the server as well. The Markdown export still runs at the end of every session.
 
 ## Running
 
