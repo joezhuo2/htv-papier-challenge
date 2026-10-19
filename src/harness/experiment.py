@@ -7,11 +7,10 @@ import sys
 import torch
 
 from harness import data, kernel
-from harness.metrics import Metrics, tflops
+from harness.metrics import ROUNDS, Metrics, tflops
 
 WARMUP = 10
 REPS = 50
-ROUNDS = 7
 ROUND_REPS = 20
 
 
@@ -42,7 +41,7 @@ def round_ms(fn, reps=ROUND_REPS):
     return statistics.median(times)
 
 
-def interleaved(fns):
+def interleaved(fns, rounds=ROUNDS):
     """Times every target in the same process and the same window, rotating the order each round so no target always runs
     first or last. Returns each target's per-round median latencies."""
     for fn in fns.values():
@@ -51,7 +50,7 @@ def interleaved(fns):
     torch.cuda.synchronize()
     names = list(fns)
     per = {n: [] for n in names}
-    for r in range(ROUNDS):
+    for r in range(rounds):
         for n in names[r % len(names):] + names[:r % len(names)]:
             per[n].append(round_ms(fns[n]))
     return per
@@ -117,7 +116,7 @@ def measure(spec):
             if spec.get("refs"):
                 # speedups come from per-round ratios against references timed in the same window, with their spread
                 fns = {"candidate": call(fn, x, w, b)} | {k: call(ref_fn(r), x, w, b) for k, r in spec["refs"].items()}
-                per = interleaved(fns)
+                per = interleaved(fns, spec.get("rounds", ROUNDS))
                 m.latency_ms = statistics.median(per["candidate"])
                 m.latency_std_ms = statistics.stdev(per["candidate"])
                 for k in spec["refs"]:

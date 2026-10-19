@@ -1,5 +1,7 @@
 from dataclasses import asdict, dataclass, field, fields
 
+ROUNDS = 7
+MAX_ROUNDS = 14  # a retest, bounded so four interleaved targets still finish inside the harness timeout
 CONTRACT = ("latency_ms", "tflops", "max_error", "adv_error", "vram_mb", "compiled_ok", "correct_ok")
 
 
