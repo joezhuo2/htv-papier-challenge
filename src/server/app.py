@@ -5,6 +5,8 @@ and then runs the orchestrator in a background thread. The default start keeps t
 with record: true is the recording mode: the full loop for up to RECORD_HYPS hypotheses (default 8) or until Stop, with the log
 saved as a replay. POST /restart stops the current session and replaces it with a new one waiting for Start. Each WebSocket client first gets the session history as one array, then
 every new event, and may send Command objects. GET /preflight checks the GPU, the NIM key and the Papiers token for real.
+GET /papiers/writes previews the Papiers write-back of a finished run (the live session, or ?file= a replay under demo/ or runs/), and
+POST /papiers/writes applies the approved items, for the finished live session only: a replay or mock log can never write.
 """
 
 import asyncio
@@ -13,9 +15,14 @@ import os
 import subprocess
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
+
+ROOT = Path(__file__).resolve().parents[2]
+REPLAY_DIRS = ("demo", "runs")
 
 COMMANDS = {"add_directive", "answer_help", "approve_hybrid", "start", "stop", "retry"}
 
@@ -83,6 +90,18 @@ def run_check(fn):
     return {"ok": ok, "detail": detail} | ({"warn": True} if warn and warn[0] else {})
 
 
+class Approval(BaseModel):
+    session: str
+    ids: list[str]
+
+
+def replay_file(file):
+    path = (ROOT / file.lstrip("/")).resolve()
+    if not any(path.is_relative_to(ROOT / d) for d in REPLAY_DIRS) or not path.is_file():
+        raise HTTPException(404, f"no replay at {file}")
+    return path
+
+
 def build():
     from agent import session
     cap = os.environ.get("MAX_HYPS", "1")
@@ -142,6 +161,46 @@ def create(factory=None, checks=CHECKS, autostart=None):
         orch = state["orch"]
         return {"started": bool(state.get("thread")), "record": orch.record, "cap": orch.max_hyps, "record_cap": record_hyps,
                 "checks": {name: run_check(fn) for name, fn in checks.items()}}
+
+    def live_run(session=None):
+        """The live session's (events, session id, ledger path, why apply is refused or None)."""
+        from agent import writeback
+        orch = state["orch"]
+        sid = orch.session.split("/")[-1]
+        if session not in (None, sid):
+            raise HTTPException(404, f"{session} is not this server's live session ({sid})")
+        events = list(orch.log.events)
+        why = ("The session has not finished." if not orch.done else "Mock data never writes to Papiers." if any(e.get("mock") for e in events)
+               else None)
+        return events, sid, orch.log.path.with_name(writeback.LEDGER), why
+
+    @app.get("/papiers/writes")
+    def writes(file: str | None = None):
+        from agent import writeback
+        if file:
+            path = replay_file(file)
+            ledger = path.with_name(writeback.LEDGER)
+            return writeback.preview(writeback.load(path), path.parent.name, ledger if ledger.exists() else None) | {
+                "apply": False, "reason": "A replay is read-only: Apply works only on the live session that produced the run."}
+        events, sid, ledger, why = live_run()
+        if not any(e["type"] == "session_finished" for e in events):
+            raise HTTPException(409, "The session has not finished, write-back is available after the final verdicts.")
+        return writeback.preview(events, sid, ledger) | {"apply": why is None, "reason": why}
+
+    @app.post("/papiers/writes")
+    def write(body: Approval):
+        from agent import writeback
+        events, sid, ledger, why = live_run(body.session)
+        if why:
+            raise HTTPException(403, why)
+        try:
+            results = writeback.apply(events, sid, body.ids, ledger)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        except FileNotFoundError as e:
+            raise HTTPException(503, str(e)) from None
+        state["orch"].log.emit("papiers_written", results=[{k: r[k] for k in ("id", "status", "error") if k in r} for r in results])
+        return {"session": sid, "results": results}
 
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
