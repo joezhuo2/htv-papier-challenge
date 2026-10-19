@@ -7,12 +7,13 @@ import re
 import subprocess
 import time
 
-from agent import papiers
+from agent import fingerprint, papiers
 
 COLORS = {"confirmed": "#5fb85f", "rejected": "#e05d5d", "inconclusive": "#ffd400", "provisional": "#ffd400"}
 MAX_WRITES = 20
 ANCHOR_WORDS = 8
 REASON_CHARS = 80
+TITLE_CHARS = 48
 TIMEOUT_S = 30
 LEDGER = "papiers-writes.json"
 WEB = {"web_clip", "tweet"}  # source families without pages
@@ -44,13 +45,22 @@ def measured(v, word):
     return ", ".join(m for m, _ in got), ", ".join(b for _, b in got)
 
 
-def note(run, word, v):
+def title(claim):
+    return short(re.split(r"[.;:]\s|,\s", claim.strip())[0], TITLE_CHARS)
+
+
+def note(run, word, v, hyp=None):
+    """hyp is the hypothesis_proposed payload: with its base config the note carries the fingerprint, a log from before it does not."""
     m, b = measured(v, word)
-    return f"[RWR] run {run} | {word} | {m} vs {b} | {short(v['reason'])}"
+    out = f"[RWR] run {run} | {word} | {m} vs {b} | {short(v['reason'])}"
+    if hyp and hyp.get("base"):
+        out += fingerprint.tail(fingerprint.delta(hyp["base"], hyp["params"]), hyp["base"], v["bound"], hyp.get("rounds"), title(hyp["claim"]))
+    return out
 
 
-def build(hid, v, cited, notes, session):
+def build(hid, v, hy, notes, session):
     """(item, None) for a writable verdict, (None, reason) for a skipped one."""
+    cited = hy.get("papiers")
     if not cited:
         return None, "no Papiers passage cited"
     n = notes.get(cited)
@@ -74,18 +84,18 @@ def build(hid, v, cited, notes, session):
     start = " ".join(w[:ANCHOR_WORDS])
     return {"id": hid, "verdict": word, "doc": n.get("document_title") or n["doc_id"], "doc_id": n["doc_id"],
             "pages": None if n.get("page") is None else str(n["page"]), "passage": text, "start": start,
-            "end": " ".join(w[-ANCHOR_WORDS:]) if len(w) > 2 * ANCHOR_WORDS else None, "note": note(run, word, v), "color": COLORS[word],
+            "end": " ".join(w[-ANCHOR_WORDS:]) if len(w) > 2 * ANCHOR_WORDS else None, "note": note(run, word, v, hy), "color": COLORS[word],
             "key": f"{n['doc_id']}|{start}|{run}"}, None
 
 
 def plan(events, session):
     """(pending, skipped) from the final verdict of every judged hypothesis."""
     notes = {e["note"]["id"]: e["note"] for e in events if e["type"] == "papiers_context" and "note" in e}
-    cited = {e["hypothesis"]["id"]: e["hypothesis"].get("papiers") for e in events if e["type"] == "hypothesis_proposed"}
+    hyps = {e["hypothesis"]["id"]: e["hypothesis"] for e in events if e["type"] == "hypothesis_proposed"}
     final = {e["hypothesis"]: e for e in events if e["type"] == "verdict"}
     pending, skipped = [], []
     for hid, v in final.items():
-        it, why = build(hid, v, cited.get(hid), notes, session)
+        it, why = build(hid, v, hyps.get(hid, {}), notes, session)
         if it:
             pending.append(it)
         else:

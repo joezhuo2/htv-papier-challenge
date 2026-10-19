@@ -13,13 +13,14 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from agent import fingerprint
+
 # lower ranks first: an annotated highlight carries the user's own words, a note is theirs entirely
 RANK = {"annotated highlight": 0, "note": 1, "highlight": 2, "passage": 3, "conversation": 4}
 TEX = re.compile(r"\$\$?(.+?)\$\$?|\\\((.+?)\\\)|\\\[(.+?)\\\]", re.DOTALL)
 TILING = {"tile", "tiles", "stage", "stages", "warp", "warps", "shared", "memory"}
 # the note prefix of a verdict written by an earlier session: context for the proposer, never evidence for a new claim
 PRIOR = "[RWR]"
-PRIOR_NOTE = re.compile(r"^\[RWR\] run (\S+) \| (\w+) \| (.+?) vs (.+?) \| (.*)$", re.DOTALL)
 PRIOR_READS = 2  # read calls at session start, of up to 50 highlights each
 STOP = {"a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "the", "to", "with"}
 
@@ -78,9 +79,14 @@ def parents(envelope):
 
 
 def parse_note(text):
-    """An [RWR] note to {run, verdict, measured, bound, reason}, None for anything else."""
-    m = PRIOR_NOTE.match((text or "").strip())
-    return m and dict(zip(("run", "verdict", "measured", "bound", "reason"), m.groups()))
+    """An [RWR] note to {run, verdict, measured, bound, reason}, plus fp (see agent.fingerprint) when it carries one. None for anything else.
+    The reason never holds a pipe, the writer replaces them."""
+    head, verdict, figures, reason, *rest = (text or "").strip().split(" | ") + [None] * 4
+    run, scored = re.fullmatch(r"\[RWR\] run (\S+)", head), figures and re.fullmatch(r"(.+?) vs (.+)", figures, re.DOTALL)
+    if not (run and scored and reason is not None and re.fullmatch(r"\w+", verdict or "")):
+        return None
+    fp = fingerprint.parse_tail([s for s in rest if s])
+    return {"run": run[1], "verdict": verdict, "measured": scored[1], "bound": scored[2], "reason": reason} | ({"fp": fp} if fp else {})
 
 
 def citable(n, prior=()):
