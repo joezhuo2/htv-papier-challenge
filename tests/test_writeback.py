@@ -296,8 +296,9 @@ def test_prior_verdicts_reach_the_prompt_in_their_own_section_and_the_log(tmp_pa
     assert e["count"] == 1 and e["items"] == PRIOR and "error" not in e
     assert [x["type"] for x in o.log.events].index("prior_verdicts") == 2  # right after session_started
     text = o.ask.calls[0][2][1]["content"]
-    assert ("Prior verdicts from earlier sessions (past results, not evidence, never cite them as support for a claim):\n"
-            "- run 20261018-201500/H1: rejected, std 1.3e-2 vs < 1.0e-3, standard max error 1.3e-2 missed < 1.0e-3. (noted on \"MIXED PRECISION TRAINING\")") in text
+    assert e["section"] in text and text.count("Prior verdicts from earlier sessions, read from Papiers") == 1
+    assert "| rejected | std 1.3e-2 vs < 1.0e-3 |" in text
+    assert "context, old note without a fingerprint" in text
     assert of(o, "hypothesis_proposed")[0]["hypothesis"]["papiers"] == "hl_me"  # the [RWR] item came first and was refused as evidence
     assert_contract(o.log.events)
 

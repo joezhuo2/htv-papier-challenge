@@ -13,6 +13,7 @@ from harness.kernel import (
     fit_stages,
     smem_bytes,
 )
+from harness.metrics import MAX_ROUNDS, ROUNDS
 
 SYSTEM = f"""You are a GPU kernel research agent tuning a fused Triton kernel computing gelu(x @ w + b) in FP16 on an RTX 5060 laptop GPU (Blackwell, 8 GB). Shape M = N = K = 2048.
 You may only edit these parameters:
@@ -49,9 +50,9 @@ def headroom_line(h):
             f"({e['min']:.2f} to {e['max']:.2f}). Keep predictions physically plausible against this.")
 
 
-def prompt(branch, directives, start, ledger, avoid, notes=(), bound=1e-3, headroom=None, refused=(), prior=()):
+def prompt(branch, directives, start, ledger, avoid, notes=(), bound=1e-3, headroom=None, refused=(), prior=""):
     """ledger: every run this session on any branch, as rows from Orchestrator.ledger(). refused: rejected single-knob changes.
-    prior: verdicts earlier sessions wrote to Papiers, parsed from their [RWR] notes."""
+    prior: the prior-verdicts section built by agent.fingerprint from the [RWR] notes earlier sessions wrote, empty when there are none."""
     lines = [
         f"Branch: {branch['id']} ({branch['label']}).",
         f"Error bound on this branch, set by its lens: max_error under {bound:.0e} on the standard batch. Use it as prediction.max_error.",
@@ -68,9 +69,7 @@ def prompt(branch, directives, start, ledger, avoid, notes=(), bound=1e-3, headr
                      "refused in any proposal; one that lost only together with other changes may be tested alone, never combined again: "
                      + "; ".join(refused))
     if prior:
-        lines.append("Prior verdicts from earlier sessions (past results, not evidence, never cite them as support for a claim):")
-        lines += [f"- run {p['run']}: {p['verdict']}, {p['measured']} vs {p['bound']}, {p['reason']}"
-                  + (f" (noted on \"{p['document_title']}\")" if p.get("document_title") else "") for p in prior]
+        lines.append(prior)
     lines += [f"Context note: {n}" for n in notes]
     lines.append('Propose the next hypothesis. Use "vs": "parent_best" unless this is the first change from the naive kernel.')
     return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": "\n".join(lines)}]
@@ -92,6 +91,9 @@ def parse(text):
     lo, hi = (1.1, 10.0) if p["vs"] == "naive" else (1.02, 2.0)
     if not lo <= p["min_speedup"] <= hi:
         return None, f"min_speedup {p['min_speedup']} vs {p['vs']} is outside the plausible range {lo} to {hi}"
+    rounds = h.get("retest_rounds")
+    if rounds is not None and (not isinstance(rounds, int) or isinstance(rounds, bool) or not ROUNDS < rounds <= MAX_ROUNDS):
+        return None, f"retest_rounds must be an integer above {ROUNDS} and at most {MAX_ROUNDS}"
     try:
         params = Params(**h.get("params", {}))
     except (TypeError, ValueError) as e:
@@ -105,7 +107,7 @@ def parse(text):
     adjusted = None if fitted == params else (f"Stages cut from {params.stages} to {fitted.stages}, the largest count that fits in shared memory "
                                               f"({smem_bytes(params)} bytes needed, {smem_bytes(fitted)} of {SMEM_LIMIT} after the cut)")
     return {"claim": re.sub(r"\bgelu\b", "GELU", h["claim"], flags=re.IGNORECASE), "explanation": h.get("explanation", ""),
-            "prediction": {k: p[k] for k in ("min_speedup", "vs", "max_error")}, "params": fitted, "adjusted": adjusted}, None
+            "prediction": {k: p[k] for k in ("min_speedup", "vs", "max_error")}, "params": fitted, "adjusted": adjusted, "rounds": rounds}, None
 
 
 KNOB_RE = {

@@ -24,7 +24,7 @@ from pydantic import BaseModel
 ROOT = Path(__file__).resolve().parents[2]
 REPLAY_DIRS = ("demo", "runs")
 
-COMMANDS = {"add_directive", "answer_help", "approve_hybrid", "start", "stop", "retry"}
+COMMANDS = {"add_directive", "answer_help", "approve_hybrid", "confirm_prior", "start", "stop", "retry"}
 
 
 def valid(cmd):
@@ -32,6 +32,8 @@ def valid(cmd):
         return False
     if cmd["type"] == "add_directive":
         return cmd.get("lens") in ("speed", "precision") and isinstance(cmd.get("text"), str) and bool(cmd["text"].strip())
+    if cmd["type"] == "confirm_prior":
+        return isinstance(cmd.get("help"), str) and isinstance(cmd.get("run"), bool)
     return True
 
 
@@ -118,9 +120,10 @@ def create(factory=None, checks=CHECKS, autostart=None):
 
     record_hyps = int(os.environ.get("RECORD_HYPS", "8"))
 
-    def start(record=False):
+    def start(record=False, ignore_prior=False):
         if state.get("thread"):
             return
+        state["orch"].ignore_prior = ignore_prior
         if record:
             state["orch"].set_record(record_hyps)
         state["thread"] = threading.Thread(target=state["orch"].run, daemon=True)
@@ -228,7 +231,7 @@ def create(factory=None, checks=CHECKS, autostart=None):
                 if not valid(cmd):
                     continue
                 if cmd["type"] == "start":
-                    start(cmd.get("record") is True)
+                    start(cmd.get("record") is True, cmd.get("ignore_prior") is True)
                 else:
                     orch.command(cmd)
         except (WebSocketDisconnect, RuntimeError):

@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 
 from agent import export as ex
+from agent import fingerprint as fp
 from agent import hypothesis as hyp
 from agent.events import Log
 from agent.papiers import citable, words
@@ -80,10 +81,13 @@ class Hyp:
     ref: str = "naive"  # which same-window reference the speedup was taken against
     bonus: bool = False  # ran in a reserved slot (a presenter hunch or the approved hybrid), not counted against the cap
     papiers: str | None = None  # the id of the Papiers item cited in the note
+    origin: Params | None = None  # the config the change is measured from, set when the hypothesis is logged
+    rounds: int | None = None  # timing rounds of a retest, the harness default otherwise
 
     def dict(self):
         d = {"id": self.id, "branch": self.branch, "claim": self.claim, "prediction": self.prediction, "params": self.params.dict()}
-        return d | ({"note": self.note} if self.note else {}) | ({"papiers": self.papiers} if self.papiers else {})
+        return d | ({"note": self.note} if self.note else {}) | ({"papiers": self.papiers} if self.papiers else {}) \
+            | ({"base": self.origin.dict()} if self.origin else {}) | ({"rounds": self.rounds} if self.rounds else {})
 
 
 @dataclass
@@ -333,6 +337,10 @@ class Orchestrator:
         self.context = context
         self.read_back = read_back
         self.priors: list[dict] = []
+        self.ignore_prior = False  # set by the Start command: no read-back and no repeat guard for this session
+        self.held: dict[str, tuple] = {}  # hunch ref -> the hunch waiting for the human to confirm a repeat of a prior verdict
+        self.shown = ""  # the last prior-verdicts section logged
+        self.repeats: set = set()  # refusals already logged, so a re-proposal or the seed check logs one
         self.read: dict[str, list] = {}
         self.help_deadline_s = help_deadline_s
         self.max_hyps, self.retry_s = max_hyps, retry_s
@@ -516,7 +524,7 @@ class Orchestrator:
         main = Branch("main", [], "Baseline tuning", "both")
         self.branches["main"] = main
         self.log.emit("session_started", baselines={"eager": self.eager.contract(), "naive": self.naive.contract()}, branch=main.dict())
-        if self.read_back:
+        if self.read_back or self.ignore_prior:
             self.read_prior()
         self.log.emit("agent_log", text=f"Baselines measured: naive {self.naive.latency_ms:.3f} ms, eager {self.eager.latency_ms:.3f} ms "
                                         f"(eager standard error {sci(self.eager.max_error)}). Starting from the naive configuration.")
@@ -611,14 +619,43 @@ class Orchestrator:
         return {"best": best_run, "ruled_out": ruled, "next": nxt, "human": human, "hunches": hunches}
 
     def read_prior(self):
-        """Logged even when nothing is found, so an empty read-back is visible."""
+        """Logged even when nothing is found or the read is switched off, so an empty read-back is visible."""
         err = None
+        if self.ignore_prior:
+            self.log.emit("prior_verdicts", count=0, items=[], section="", ignored=True)
+            self.log.emit("agent_log", text="Prior verdicts ignored for this session: read-back and the repeat guard are off.")
+            return
         try:
             with self.released():
                 self.priors = self.read_back()
         except Exception as e:  # noqa: BLE001, Papiers is optional context, the loop runs without it
             err = f"Papiers unavailable ({type(e).__name__})"
-        self.log.emit("prior_verdicts", count=len(self.priors), items=self.priors, **({"error": err} if err else {}))
+        self.shown = fp.section(self.priors, self.bounds("both"))
+        self.log.emit("prior_verdicts", count=len(self.priors), items=self.priors, section=self.shown, **({"error": err} if err else {}))
+        self.log.emit("agent_log", text=f"Prior verdicts: {len(self.priors)} read from Papiers" + (f", {err}" if err else "")
+                                        + f", {sum(1 for p in self.priors if p.get('fp'))} with a fingerprint the repeat guard can use.")
+
+    def prior_section(self, b):
+        """The prior-verdicts text of a prompt on b. Which rows block depends on b's bounds, so a changed section is logged again."""
+        text = fp.section(self.priors, self.bounds(b.lens))
+        if text != self.shown:
+            self.shown = text
+            self.log.emit("prior_verdicts", count=len(self.priors), items=self.priors, section=text, branch=b.id)
+        return text
+
+    def prior_hit(self, b, base: Params, p: Params, rounds=None):
+        """(blocker, retested): the prior verdict that refuses p from base on b, and the inconclusive one a retest with more rounds allows."""
+        return (None, None) if self.ignore_prior else fp.blocking(self.priors, base.dict(), p.dict(), self.bounds(b.lens), rounds)
+
+    def refuse_repeat(self, b, blocker, seed=False):
+        """Logs the refusal once per branch and prior verdict, returns its reason."""
+        why = fp.refusal(blocker)
+        if (b.id, blocker["id"], seed) not in self.repeats:
+            self.repeats.add((b.id, blocker["id"], seed))
+            self.log.emit("prior_refused", branch=b.id, prior=blocker, text=why, **({"seed": True} if seed else {}))
+            if seed:
+                self.log.emit("agent_log", text=f"Skipped the seeded FP16 variant on {b.id}: {why}. Start the session with \"Ignore prior verdicts\" to run it again.")
+        return why
 
     def proceed_default(self):
         main = self.branches["main"]
@@ -640,6 +677,8 @@ class Orchestrator:
             self.answer(cmd)
         elif cmd["type"] == "approve_hybrid":
             self.approve_hybrid(cmd.get("branches") or [])
+        elif cmd["type"] == "confirm_prior":
+            self.confirm_prior(cmd)
         elif cmd["type"] in ("retry", "start"):
             self.retry.set()
 
@@ -684,6 +723,21 @@ class Orchestrator:
         if lens == "precision":
             self.reevaluate(d)
 
+    def confirm_prior(self, cmd):
+        """The human's answer to a prior_duplicate card: run the hunch anyway, or skip it."""
+        ref = cmd["help"]
+        if ref not in self.held:
+            self.log.emit("agent_log", text=f"Ignored a prior verdict confirmation for {ref}: nothing is waiting on it.")
+            return
+        bid, text, cite, lens, delta = self.held.pop(ref)
+        b = self.live(bid)
+        if not cmd["run"] or b is None:
+            self.hunches[ref] = "not run: skipped after the prior verdict warning" if b else f"not run: {bid} closed while it waited"
+            self.log.emit("plan_change", help=ref, text=f"Not testing \"{text[:120]}\" ({ref}): "
+                                                        + ("skipped after the prior verdict warning." if b else f"{bid} closed while it waited for confirmation."))
+            return
+        self.hunch(b, text, cite, ref, lens, delta, forced=True)
+
     def bound_only(self, b, d):
         """A directive that names no concrete change is a constraint: the next hypothesis is attributed to its bound, not called a hunch."""
         if self.capped() or self.stopped:
@@ -725,6 +779,13 @@ class Orchestrator:
         dup, why = self.duplicate(p)
         return (None, e, why, dup) if dup else (p, e, None, None)
 
+    def candidate(self, b, delta):
+        """The config a concrete hunch gives on b's current best, None when it names an invalid value."""
+        try:
+            return fit_stages(replace(self.start_point(b.id)[0], **delta))
+        except ValueError:
+            return None
+
     def duplicate(self, p):
         """(match, why) when the exact config p, accumulation and GELU included, already ran, is being measured, or is queued as a
         hunch or the hybrid. match is the hypothesis, or True for a queued one. (None, None) when p is new."""
@@ -739,7 +800,7 @@ class Orchestrator:
             return True, f"that exact config, {params_text(p)}, is the pending hybrid of {' and '.join(self.hybrid['branches'])}"
         return None, None
 
-    def hunch(self, b, text, cite, ref, lens, delta):
+    def hunch(self, b, text, cite, ref, lens, delta, forced=False):
         """A typed hunch gets exactly one plan_change, when it arrives: whether it is a retest, and either what will run (built in code on
         the branch's current best params, in a reserved slot the cap does not count) or why it will not. Never dropped silently."""
         quoted = f"Because the {lens.capitalize()} lens sent \"{text[:120]}\""
@@ -754,6 +815,13 @@ class Orchestrator:
             else:
                 self.hunches[ref] = f"not run: {why}"
             self.log.emit("plan_change", help=ref, text=f"{quoted}, I am not running it again on {b.id} because {why}.")
+            return
+        if p and not forced and (hit := self.prior_hit(b, self.start_point(b.id)[0], p)[0]):
+            # the human owns the rules: the repeat waits for a Run anyway or Skip instead of being refused
+            self.held[ref] = (b.id, text, cite, lens, delta)
+            self.hunches[ref] = "not run: an earlier session already tested it and no confirmation arrived"
+            self.log.emit("prior_duplicate", help=ref, branch=b.id, prior=hit,
+                          text=f"{quoted}, but an earlier session already ran this: {fp.tested(hit)}. Confirm to run it anyway.")
             return
         if not e:
             p, why = None, None  # a first test goes to the model, which can fit the rest of the config around the change
@@ -911,6 +979,7 @@ class Orchestrator:
         if b.id in self.defaulted:
             flag = "flagged: default continuation, no lens directive arrived"
             h.note = f"{h.note} ({flag})" if h.note else flag.capitalize()
+        h.origin = h.base or self.start_point(b.id)[0]
         self.hyps.append(h)
         self.log.emit("hypothesis_proposed", hypothesis=h.dict())
         best = self.best_run(b.id)
@@ -1190,9 +1259,11 @@ class Orchestrator:
                 cite = f"Suggested by the {lens} lens in answer to {cmd['help']}"
                 self.hints[b.id] = Hint(note, f"{cite}, a retest of {e.id} on the current best tiles" if e else cite, cmd["help"], delta, p, e,
                                         self.start_point(b.id)[0])
+                seen = delta and (c := self.candidate(b, delta)) and (hit := self.prior_hit(b, self.start_point(b.id)[0], c)[0])
                 text = (f"{late}Because the {lens} lens suggests \"{note}\", I am testing that next on {b.id} instead of more tile search, still under the active error bound."
                         + (f" It was already tested in {e.id} ({e.judgment.verdict}), so this is a retest on the current best tiles." if e else "")
-                        + (f" As a fixed change it cannot run ({why}), so the agent picks the closest valid version." if why else "") + fewer)
+                        + (f" As a fixed change it cannot run ({why}), so the agent picks the closest valid version." if why else "")
+                        + (f" Warning: an earlier session already ran this, {fp.tested(hit)}. It runs anyway, it is your call." if seen else "") + fewer)
                 if why:
                     self.hints[b.id].params = None
             else:
@@ -1271,7 +1342,7 @@ class Orchestrator:
                                  if b.pivot else [])
                               + [f"Papiers {n.get('kind') or 'item'} from \"{n.get('document_title') or n['title']}\": {n['excerpt']}" for n in notes],
                               self.bounds(b.lens)["standard"], self.headroom,
-                              self.refused_lines(), self.priors)
+                              self.refused_lines(), self.prior_section(b))
         why, first = "", ""
         for attempt in range(3):
             text = self.ask_or_wait(messages, f"{b.id}-{b.iters}-{attempt}", b.id)
@@ -1285,6 +1356,9 @@ class Orchestrator:
                 return None
             h, why = hyp.parse(text)
             refused = h and self.vet(start, h["params"], h["claim"])
+            retest = None
+            if h and not refused:
+                refused, retest = self.repeat(b, start, h, hint)
             missing = hint and hint.delta and h and not h["adjusted"] and [value_text(k, v) for k, v in hint.delta.items() if getattr(h["params"], k) != v]
             if missing and not refused:
                 refused = f"the lens asked to test {', '.join(missing)}, which this proposal does not set"
@@ -1308,6 +1382,10 @@ class Orchestrator:
                                    if getattr(h["params"], k) != getattr(b.pivot, k)):
                     claim += f" Relative to the pivot config ({params_text(b.pivot)}) it changes {change(b.pivot, h['params'])}."
                 new = self.new_hyp(b, claim, h["prediction"], h["params"], cite)
+                if retest:
+                    new.rounds = h["rounds"]
+                    self.log.emit("agent_log", text=f"{new.id} retests {retest['run']} ({retest['measured']} vs {retest['bound']}, inconclusive after "
+                                                    f"{retest['fp']['rounds']} rounds) with {new.rounds} rounds.")
                 self.spend(new, hint)
                 if hint and hint.delta is not None:
                     self.hunches[hint.ref] = new.id
@@ -1335,6 +1413,17 @@ class Orchestrator:
             self.log.emit("agent_log", text=f"I could not turn \"{hint.text[:120]}\" ({hint.ref}) into a valid configuration on {b.id} ({why}), so it is not tested.")
         self.log.emit("agent_log", text=f"No valid hypothesis for branch {b.id} after 3 attempts ({why}). Closing the branch.")
         return None
+
+    def repeat(self, b, start, h, hint):
+        """(why refused or None, the inconclusive prior verdict a retest with more rounds reruns). A human's concrete hunch is warned about when it
+        arrives, never refused here."""
+        blocker, retest = self.prior_hit(b, start, h["params"], h.get("rounds"))
+        if not blocker:
+            return None, retest
+        if hint and hint.delta:
+            self.log.emit("agent_log", text=f"Running the human's change on {b.id} although {blocker['run']} already tested it ({blocker['verdict']}).")
+            return None, None
+        return self.refuse_repeat(b, blocker), None
 
     def outcome(self, h):
         if h.metrics.latency_ms is None:
@@ -1487,6 +1576,9 @@ class Orchestrator:
             return None
         p = replace(base, acc="fp16")
         if json.dumps(p.dict(), sort_keys=True) in tried_all:
+            return None
+        if blocker := self.prior_hit(b, base, p)[0]:
+            self.refuse_repeat(b, blocker, seed=True)
             return None
         bound = self.bounds(b.lens)
         claim = (f"FP16 accumulation on {tiles_text(p)} with {p.gelu} GELU cuts latency by at least 1.20x against the same config with FP32 accumulation, "
@@ -1666,7 +1758,8 @@ class Orchestrator:
         refs = {"naive": {"target": "triton", "params": NAIVE.dict()}, "eager": {"target": "eager"}}
         if parent:
             refs["parent"] = {"target": "triton", "params": parent.dict()}
-        h.metrics = self.gpu_run({"target": "triton", "params": h.params.dict(), "refs": refs}, f"{self.session}/{h.id}-{h.run}")
+        h.metrics = self.gpu_run({"target": "triton", "params": h.params.dict(), "refs": refs} | ({"rounds": h.rounds} if h.rounds else {}),
+                                 f"{self.session}/{h.id}-{h.run}")
         if h.metrics.timed_out:
             self.log.emit("agent_error", kind="harness_timeout", branch=h.branch,
                           text=f"{h.run} hit the {TIMEOUT_S} s harness timeout and was killed. It counts as a failed run.")

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from test_agent import Asker, P, h, make, run_with
+from test_prior_guard import prior
 
 FIXTURE = Path(__file__).parent / "fixtures" / "golden_session.jsonl"
 
@@ -17,7 +18,10 @@ def shape(e, depth=0):
 
 
 def session(tmp_path):
-    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"acc": "fp16"}), h(P | {"gelu": "approx"}, 1.05)), main_iters=1, branch_iters=1,
+    # an earlier session's verdict for stages 4 under the Precision bound: the Precision branch's second proposal is refused by it
+    earlier = prior("confirmed", change={"stages": 4}, base=P, bound={"standard": 1e-3, "adversarial": 1e-3})
+    o = make(tmp_path, Asker(h(P, 2.0, "naive"), h(P | {"acc": "fp16"}), h(P | {"stages": 4}, 1.05), h(P | {"gelu": "approx"}, 1.05)), main_iters=1,
+             branch_iters=1, read_back=lambda: [earlier],
              context=lambda q: [{"id": "cnv_1", "title": "Triton tutorial", "excerpt": "Accumulate in FP32."}])
     run_with(o, [(1, "speed", "Push throughput harder."), (2, "precision", "Max error under 1e-3 on both batches.")])
     return o.log.events

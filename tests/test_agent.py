@@ -101,6 +101,7 @@ REQUIRED = {
     "agent_log": {"text"}, "session_finished": {"ledger", "best"}, "papiers_context": set(), "findings_exported": {"items"},
     "help_requested": {"help"}, "help_answered": {"help", "option", "by"}, "help_cancelled": {"help", "reason"}, "plan_change": {"help", "text"}, "agent_error": {"kind", "text"},
     "hybrid_proposed": {"branches", "text"}, "final_report": {"report"}, "prior_verdicts": {"count", "items"}, "papiers_written": {"results"},
+    "prior_refused": {"branch", "prior", "text"}, "prior_duplicate": {"help", "branch", "prior", "text"},
 }
 HELP_KEYS = {"id", "target", "question", "evidence", "options", "default", "blocks", "deadline_s", "what_changes"}
 SUMMARY_KEYS = {"branch", "hypothesis", "tried", "moved", "verdict", "confidence", "confidence_reason", "uncertainties", "would_change_mind", "next_step"}
@@ -127,6 +128,11 @@ def assert_contract(events):
         if e["type"] == "final_report":
             assert set(e["report"]) == {"best", "ruled_out", "next", "human", "hunches"}
             assert all(set(x) == {"directive", "lens", "text", "outcome"} for x in e["report"]["hunches"])
+        if e["type"] in ("prior_refused", "prior_duplicate"):
+            assert {"id", "run", "verdict", "measured", "bound", "reason", "fp"} <= set(e["prior"]) and set(e["prior"]["fp"]) == {"params", "base", "kernel", "title", "bounds", "rounds"}
+            assert set(e) - {"t", "type", "text", "branch", "prior"} <= {"help", "seed"}
+        if e["type"] == "prior_verdicts" and "section" in e:
+            assert isinstance(e["section"], str) and (not e["items"] or e["section"].startswith("Prior verdicts from earlier sessions")) or e.get("ignored")
         if e["type"] == "post_mortem":
             assert set(e["post_mortem"]) - {"note"} == {"hypothesis", "expected", "observed", "cause", "pivot", "sweep"}
         if e["type"] == "papiers_context" and "note" in e:
