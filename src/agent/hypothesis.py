@@ -49,8 +49,9 @@ def headroom_line(h):
             f"({e['min']:.2f} to {e['max']:.2f}). Keep predictions physically plausible against this.")
 
 
-def prompt(branch, directives, start, ledger, avoid, notes=(), bound=1e-3, headroom=None, refused=()):
-    """ledger: every run this session on any branch, as rows from Orchestrator.ledger(). refused: rejected single-knob changes."""
+def prompt(branch, directives, start, ledger, avoid, notes=(), bound=1e-3, headroom=None, refused=(), prior=()):
+    """ledger: every run this session on any branch, as rows from Orchestrator.ledger(). refused: rejected single-knob changes.
+    prior: verdicts earlier sessions wrote to Papiers, parsed from their [RWR] notes."""
     lines = [
         f"Branch: {branch['id']} ({branch['label']}).",
         f"Error bound on this branch, set by its lens: max_error under {bound:.0e} on the standard batch. Use it as prediction.max_error.",
@@ -66,6 +67,10 @@ def prompt(branch, directives, start, ledger, avoid, notes=(), bound=1e-3, headr
         lines.append("Changes that lost this session (slower than the parent, or over an error bound), on any branch. One that lost alone is "
                      "refused in any proposal; one that lost only together with other changes may be tested alone, never combined again: "
                      + "; ".join(refused))
+    if prior:
+        lines.append("Prior verdicts from earlier sessions (past results, not evidence, never cite them as support for a claim):")
+        lines += [f"- run {p['run']}: {p['verdict']}, {p['measured']} vs {p['bound']}, {p['reason']}"
+                  + (f" (noted on \"{p['document_title']}\")" if p.get("document_title") else "") for p in prior]
     lines += [f"Context note: {n}" for n in notes]
     lines.append('Propose the next hypothesis. Use "vs": "parent_best" unless this is the first change from the naive kernel.')
     return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": "\n".join(lines)}]

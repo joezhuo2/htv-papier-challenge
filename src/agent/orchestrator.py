@@ -16,7 +16,7 @@ from dataclasses import dataclass, field, replace
 from agent import export as ex
 from agent import hypothesis as hyp
 from agent.events import Log
-from agent.papiers import words
+from agent.papiers import citable, words
 from agent.verdict import Judgment, judge, sci
 from harness.data import BOUND
 from harness.kernel import (
@@ -312,13 +312,14 @@ class Stopped(Exception):
 class Orchestrator:
     """engine(spec, run_id) -> Metrics runs one experiment (harness.runner.run in production).
     ask(messages, model, tag) -> str is the LLM. fast and strong are model ids.
-    context(query) -> [{id, title, excerpt}] reads Papiers, optional. headroom is harness.noise.headroom(), quoted in the prompt.
+    context(query) -> [{id, title, excerpt}] reads Papiers, optional. read_back() -> [{run, verdict, measured, bound, reason, ...}] reads the
+    verdicts earlier sessions wrote to Papiers, optional, once at start: prompt context that is never cited. headroom is harness.noise.headroom(), quoted in the prompt.
     record marks a recording session (set with set_record): uncapped by the live demo cap, it never finishes on idle, it waits
     directive_wait_s for a lens directive whenever nothing is runnable and then continues on main as a flagged default, and it
     saves its log as a replay."""
 
     def __init__(self, engine, ask, log: Log, session: str, fast: str, strong: str, band: float,
-                 main_iters=2, branch_iters=3, idle_s=120.0, context=None, help_deadline_s=45.0, max_hyps=None, retry_s=30.0, headroom=None, directive_wait_s=90.0, end_wait_s=15.0):
+                 main_iters=2, branch_iters=3, idle_s=120.0, context=None, help_deadline_s=45.0, max_hyps=None, retry_s=30.0, headroom=None, directive_wait_s=90.0, end_wait_s=15.0, read_back=None):
         self.engine, self.ask, self.log, self.session = engine, ask, log, session
         self.fast, self.strong, self.band = fast, strong, band
         self.main_iters, self.branch_iters, self.idle_s = main_iters, branch_iters, idle_s
@@ -330,6 +331,8 @@ class Orchestrator:
         self.stopped = False
         self.runs = 0
         self.context = context
+        self.read_back = read_back
+        self.priors: list[dict] = []
         self.read: dict[str, list] = {}
         self.help_deadline_s = help_deadline_s
         self.max_hyps, self.retry_s = max_hyps, retry_s
@@ -513,6 +516,8 @@ class Orchestrator:
         main = Branch("main", [], "Baseline tuning", "both")
         self.branches["main"] = main
         self.log.emit("session_started", baselines={"eager": self.eager.contract(), "naive": self.naive.contract()}, branch=main.dict())
+        if self.read_back:
+            self.read_prior()
         self.log.emit("agent_log", text=f"Baselines measured: naive {self.naive.latency_ms:.3f} ms, eager {self.eager.latency_ms:.3f} ms "
                                         f"(eager standard error {sci(self.eager.max_error)}). Starting from the naive configuration.")
         if self.record:
@@ -604,6 +609,16 @@ class Orchestrator:
         best_run = best and {"run": best.run, "hypothesis": best.id, "verdict": best.judgment.verdict, "branch": best.branch, "params": best.params.dict(),
                              "latency_ms": best.metrics.latency_ms} | {k: out[k] for k in ("vs_naive", "vs_eager", "cross_window") if k in out}
         return {"best": best_run, "ruled_out": ruled, "next": nxt, "human": human, "hunches": hunches}
+
+    def read_prior(self):
+        """Logged even when nothing is found, so an empty read-back is visible."""
+        err = None
+        try:
+            with self.released():
+                self.priors = self.read_back()
+        except Exception as e:  # noqa: BLE001, Papiers is optional context, the loop runs without it
+            err = f"Papiers unavailable ({type(e).__name__})"
+        self.log.emit("prior_verdicts", count=len(self.priors), items=self.priors, **({"error": err} if err else {}))
 
     def proceed_default(self):
         main = self.branches["main"]
@@ -1256,7 +1271,7 @@ class Orchestrator:
                                  if b.pivot else [])
                               + [f"Papiers {n.get('kind') or 'item'} from \"{n.get('document_title') or n['title']}\": {n['excerpt']}" for n in notes],
                               self.bounds(b.lens)["standard"], self.headroom,
-                              self.refused_lines())
+                              self.refused_lines(), self.priors)
         why, first = "", ""
         for attempt in range(3):
             text = self.ask_or_wait(messages, f"{b.id}-{b.iters}-{attempt}", b.id)
@@ -1613,10 +1628,13 @@ class Orchestrator:
     def cite(self, h: Hyp, start: Params):
         """Before the run: reads Papiers for the change this hypothesis makes and cites the top item in its note. Nothing is cited when
         the change query finds nothing, even if the prompt had other context, so a citation is always about the change under test."""
-        found = self.papiers(facet(h.base or start, h.params))
+        found = [n for n in self.papiers(facet(h.base or start, h.params)) if self.citable(n)]
         if found:
             h.note = f"{h.note.rstrip('.')}. {cite_text(found[0])}" if h.note else cite_text(found[0])
             h.papiers = found[0]["id"]
+
+    def citable(self, n):
+        return citable(n, {p["id"] for p in self.priors})
 
     def ask_or_wait(self, messages, tag, branch):
         """Calls the fast model. On a timeout or API error the session shows it and waits for a retry command, or retries by
@@ -1744,7 +1762,7 @@ class Orchestrator:
                                                                f"Verdict reason: {h.judgment.reason}\nError vs K sweep on adversarial magnitudes: {json.dumps(sweep)}{context}"}],
                                   self.strong, f"pm-{h.id}", ("cause", "pivot")) or fallback
             pm = {"hypothesis": h.id, "expected": expected, "observed": observed, "cause": prose["cause"], "pivot": prose["pivot"], "sweep": sweep}
-        note = self.best_note(found + self.papiers(facet(self.baseline(h)[0], h.params)), f"{pm['cause']} {pm['pivot']}")
+        note = self.best_note([n for n in found + self.papiers(facet(self.baseline(h)[0], h.params)) if self.citable(n)], f"{pm['cause']} {pm['pivot']}")
         if note:
             pm["note"] = note["id"]
         pm["cause"], pm["pivot"] = self.scrub(pm["cause"]), self.scrub(pm["pivot"])

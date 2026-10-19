@@ -100,7 +100,7 @@ REQUIRED = {
     "verdict": {"hypothesis", "verdict", "provisional", "reason", "checks", "bound"}, "post_mortem": {"post_mortem"}, "summary": {"summary"},
     "agent_log": {"text"}, "session_finished": {"ledger", "best"}, "papiers_context": set(), "findings_exported": {"items"},
     "help_requested": {"help"}, "help_answered": {"help", "option", "by"}, "help_cancelled": {"help", "reason"}, "plan_change": {"help", "text"}, "agent_error": {"kind", "text"},
-    "hybrid_proposed": {"branches", "text"}, "final_report": {"report"},
+    "hybrid_proposed": {"branches", "text"}, "final_report": {"report"}, "prior_verdicts": {"count", "items"}, "papiers_written": {"results"},
 }
 HELP_KEYS = {"id", "target", "question", "evidence", "options", "default", "blocks", "deadline_s", "what_changes"}
 SUMMARY_KEYS = {"branch", "hypothesis", "tried", "moved", "verdict", "confidence", "confidence_reason", "uncertainties", "would_change_mind", "next_step"}
@@ -130,7 +130,8 @@ def assert_contract(events):
         if e["type"] == "post_mortem":
             assert set(e["post_mortem"]) - {"note"} == {"hypothesis", "expected", "observed", "cause", "pivot", "sweep"}
         if e["type"] == "papiers_context" and "note" in e:
-            assert {"id", "title", "excerpt"} <= set(e["note"]) <= {"id", "title", "excerpt", "kind", "document_title", "highlight_text", "annotation"}
+            assert {"id", "title", "excerpt"} <= set(e["note"]) <= {"id", "title", "excerpt", "kind", "document_title", "highlight_text", "annotation",
+                                                         "doc_id", "page", "family", "anchor", "truncated"}
 
 
 # ---- verdicts ----
@@ -1125,7 +1126,8 @@ def test_retrieval_puts_annotated_highlights_first_with_the_document_title_and_t
     assert got[0] == {"id": "hl_mp1", "kind": "highlight", "document_title": "MIXED PRECISION TRAINING", "title": "MIXED PRECISION TRAINING",
                       "excerpt": "Some networks require that FP16 vector dot-product accumulates into FP32.",
                       "highlight_text": "Some networks require that FP16 vector dot-product accumulates into FP32.",
-                      "annotation": "This is why our FP16 accumulator fails at large K."}
+                      "annotation": "This is why our FP16 accumulator fails at large K.", "doc_id": "doc_mp",
+                      "anchor": "Some networks require that FP16 vector dot-product accumulates into FP32."}
     assert got[1]["kind"] == "note" and got[1]["id"] == "nte_1" and "annotation" not in got[1]
     assert not any(c[0] == "search" and "passage" in c for c in cli.calls)  # judgement found, no fallback
 
@@ -1145,7 +1147,7 @@ def test_retrieval_falls_back_to_listed_marks_then_annotated_passages_then_passa
     passage = {"results": [{"kind": "document", "id": "doc_t", "title": "Triton", "evidence": [{"kind": "passage", "id": "pas_1", "snippet": "length"}]}]}
     cli = CLI({("search", "passage", None): passage})
     got = Library(cli).retrieve("accumulation error grows with length")
-    assert got == [{"id": "pas_1", "kind": "passage", "document_title": "Triton", "title": "Triton", "excerpt": "length"}]
+    assert got == [{"id": "pas_1", "kind": "passage", "document_title": "Triton", "title": "Triton", "excerpt": "length", "doc_id": "doc_t"}]
     assert ["search", "accumulation error grows with length", "--kind", "passage", "--filter", "annotated.eq=true", "--limit", "2"] in cli.calls
     convo = {"results": [{"kind": "conversation", "id": "cnv_9", "title": "Chat", "snippet": "about tiles"}]}
     assert Library(CLI({("search", "conversation", None): convo})).retrieve("tiles")[0]["kind"] == "conversation"
