@@ -73,6 +73,29 @@ export function InformedBy({ view, h }: { view: View; h: HypothesisView }) {
   )
 }
 
+const fields = (d?: Record<string, string | number>) => (d ? Object.entries(d).map(([k, v]) => `${k}=${v}`).join(' ') : 'old note, no fingerprint')
+
+// the verdicts earlier sessions wrote, as the agent was shown them
+function PriorTable({ prior }: { prior: NonNullable<View['prior']> }) {
+  return (
+    <div data-testid="prior-table">
+      {prior.items.map(p => (
+        <div key={p.id} className="card" data-testid="prior-row">
+          <div className="row"><span className="strong small">{p.fp?.title || p.reason}</span><span className="tag">{p.verdict}</span></div>
+          <p className="small">{fields(p.fp?.params)}</p>
+          <p className="meta"><span>{p.measured} vs {p.bound}</span>{p.fp ? <span>bounds std {p.fp.bounds.std} adv {p.fp.bounds.adv}</span> : null}<span className="mono">{p.run}</span></p>
+        </div>
+      ))}
+      {prior.section ? (
+        <details>
+          <summary className="small muted">Exactly what the agent was sent</summary>
+          <pre className="small" data-testid="prior-section">{prior.section}</pre>
+        </details>
+      ) : null}
+    </div>
+  )
+}
+
 export function PapiersPanel({ view }: { view: View }) {
   const [q, setQ] = useState('')
   const [items, setItems] = useState<Item[]>()
@@ -96,9 +119,12 @@ export function PapiersPanel({ view }: { view: View }) {
       </div>
       <p className="small muted">Read by the agent this session</p>
       {view.prior ? (
-        <p className="small muted" data-testid="prior-count" title={view.prior.error ?? view.prior.items.map(p => `${p.run}: ${p.verdict}`).join('\n')}>
-          Prior verdicts read: {view.prior.count}{view.prior.error ? ` (${view.prior.error})` : ''}
-        </p>
+        <>
+          <p className="small muted" data-testid="prior-count" title={view.prior.error ?? view.prior.items.map(p => `${p.run}: ${p.verdict}`).join('\n')}>
+            Prior verdicts read: {view.prior.count}{view.prior.error ? ` (${view.prior.error})` : ''}{view.prior.ignored ? ' (ignored for this session)' : ''}
+          </p>
+          {view.prior.items.length ? <PriorTable prior={view.prior} /> : null}
+        </>
       ) : null}
       {view.reads.length === 0 ? <p className="empty">Nothing read yet.</p> : null}
       {view.reads.map((r, i) => {

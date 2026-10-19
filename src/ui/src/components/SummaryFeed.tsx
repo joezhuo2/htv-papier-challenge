@@ -175,6 +175,13 @@ export function SummaryFeed(p: Props) {
                 <p>{f.text}</p>
               </article>
             )
+          case 'refused':
+            return (
+              <article key={i} className="card" data-testid="prior-refused">
+                <div className="row"><h3>{f.seed ? 'Skipped a repeat' : 'Refused a repeat'}</h3><span className="tag">{f.prior.verdict} in <span className="mono">{f.prior.run}</span></span><MockTag on={f.mock} /><span style={{ flex: 1 }} /><span className="mono small muted">{clock(f.t)}</span></div>
+                <p>On <span className="mono">{f.branch}</span>: {f.text}.</p>
+              </article>
+            )
           case 'answer':
             return (
               <p key={i} className="line">

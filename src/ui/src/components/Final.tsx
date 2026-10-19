@@ -85,7 +85,7 @@ function FinalSections({ report }: { report: FinalReport }) {
 
 interface Check { ok: boolean; detail: string; warn?: boolean }
 
-export function Preflight({ onStart, fallback, log }: { onStart: (record: boolean) => void; fallback: string; log: View['log'] }) {
+export function Preflight({ onStart, fallback, log }: { onStart: (record: boolean, ignorePrior: boolean) => void; fallback: string; log: View['log'] }) {
   const [checks, setChecks] = useState<Record<string, Check>>()
   const [caps, setCaps] = useState<{ cap: number | null; record_cap: number }>()
   const [error, setError] = useState<string>()
@@ -99,7 +99,8 @@ export function Preflight({ onStart, fallback, log }: { onStart: (record: boolea
   // one start per session: locked from the click (or the first agent event) until the session starts, unless it cannot start
   const [clicked, setClicked] = useState(false)
   const locked = (clicked || log.length > 0) && !blocked
-  const start = (record: boolean) => { setClicked(true); onStart(record) }
+  const [ignorePrior, setIgnorePrior] = useState(false)
+  const start = (record: boolean) => { setClicked(true); onStart(record, ignorePrior) }
   return (
     <article className="card focus" data-testid="preflight" style={{ maxWidth: 560 }}>
       <h2>Pre-flight</h2>
@@ -114,6 +115,10 @@ export function Preflight({ onStart, fallback, log }: { onStart: (record: boolea
         </ul>
       )}
       {latest ? <p className={`small${blocked ? ' strong' : ' muted'}`} role={blocked ? 'alert' : 'status'} data-testid="starting">{latest.text}</p> : null}
+      <label className="inline small">
+        <input type="checkbox" checked={ignorePrior} onChange={e => setIgnorePrior(e.target.checked)} disabled={locked} data-testid="ignore-prior" />
+        Ignore prior verdicts for this session (no read-back, no repeat guard)
+      </label>
       <div className="inline">
         <button className="primary" onClick={() => start(false)} disabled={!checks || locked} data-testid="start">Start session</button>
         {caps?.cap ? <span className="small muted">table demo, capped at {plural(caps.cap)}</span> : null}

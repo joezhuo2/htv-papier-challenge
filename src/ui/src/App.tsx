@@ -140,7 +140,7 @@ export function App({ source }: { source: Source }) {
             </div>
           ) : null}
           {source.mode === 'live' && !view.started ? (
-            <Preflight onStart={record => s.send(record ? { type: 'start', record } : { type: 'start' })} fallback="?mode=replay" log={view.log} />
+            <Preflight onStart={(record, ignore_prior) => s.send({ type: 'start', ...(record ? { record } : {}), ...(ignore_prior ? { ignore_prior } : {}) })} fallback="?mode=replay" log={view.log} />
           ) : tab === 'result' && view.finished ? <ResultCard view={view} /> : tab === 'report' && view.report ? <ReportView view={view} /> : (
             <>
               <BranchGraph view={view} onSelectBranch={selectBranch} onSelectRun={selectRun} showPending={source.mode !== 'replay'} />

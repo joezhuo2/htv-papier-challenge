@@ -35,6 +35,7 @@ export function DirectivePanel({ view, sent, onSend, onSelectBranch }: Props) {
     onSend({ type: 'add_directive', lens, text: t })
     setText('')
   }
+  const holds = view.holds.filter(x => view.directives.find(d => d.id === x.help)?.lens === lens)
   const branchLink = (id: string) => <button className="link" onClick={() => onSelectBranch(id)}>{id}</button>
 
   return (
@@ -64,6 +65,17 @@ export function DirectivePanel({ view, sent, onSend, onSelectBranch }: Props) {
           </div>
         )
       })}
+      {holds.map(x => (
+        <div key={x.help} className="card focus" role="alert" data-testid={`prior-hold-${x.help}`}>
+          <p className="strong">An earlier session already ran this</p>
+          <p className="small">{x.text}</p>
+          <div className="inline">
+            <button className="primary" disabled={view.finished} onClick={() => onSend({ type: 'confirm_prior', help: x.help, run: true })}>Run anyway</button>
+            <button disabled={view.finished} onClick={() => onSend({ type: 'confirm_prior', help: x.help, run: false })}>Skip</button>
+            <span className="muted small">{x.help} on {branchLink(x.branch)}</span>
+          </div>
+        </div>
+      ))}
       <form className="stack" onSubmit={e => { e.preventDefault(); submit() }}>
         <label className="label" htmlFor="directive">New directive or hunch</label>
         <textarea

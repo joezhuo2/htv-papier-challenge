@@ -42,6 +42,7 @@ type Base = { t: number; mock: boolean }
 export type FeedItem = Base & (
   | { kind: 'summary'; summary: Summary; run?: string; hypothesis?: string; verdict?: VerdictView }
   | { kind: 'plan_change'; help: string; text: string }
+  | { kind: 'refused'; branch: string; prior: PriorVerdict; text: string; seed?: boolean }
   | { kind: 'answer'; help: string; option: string; note?: string; by: Lens }
   | { kind: 'export'; items: { kind: string; title: string; file: string }[] }
   | { kind: 'note'; note?: NoteView; query?: string }
@@ -49,6 +50,9 @@ export type FeedItem = Base & (
   | { kind: 'hybrid'; branches: string[]; text: string }
   | { kind: 'report' }
 )
+
+// a hunch that repeats a prior verdict and waits for Run anyway or Skip
+export interface HoldView { help: string; branch: string; prior: PriorVerdict; text: string; t: number; mock: boolean }
 
 export interface Selection { branch?: string; run?: string }
 
@@ -80,7 +84,8 @@ export interface View {
   ledger?: LedgerEntry[]
   best?: SessionBest
   final?: FinalReport
-  prior?: { count: number; items: PriorVerdict[]; error?: string }
+  prior?: { count: number; items: PriorVerdict[]; error?: string; section?: string; ignored?: boolean }
+  holds: HoldView[]
   lens: Lens
   selected: Selection
 }
@@ -95,7 +100,7 @@ export type Action = DemoEvent | UiAction
 
 export const initialView = (lens: Lens = 'speed'): View => ({
   t: 0, mock: false, started: false, finished: false,
-  branches: [], hypotheses: [], runs: [], verdicts: {}, history: {}, trail: {}, errors: [], directives: [], conflicts: [], helps: [],
+  branches: [], hypotheses: [], runs: [], verdicts: {}, history: {}, trail: {}, errors: [], directives: [], conflicts: [], helps: [], holds: [],
   postMortems: [], notes: [], reads: [], feed: [], log: [], lens, selected: {},
 })
 
@@ -138,7 +143,11 @@ export function reduce(prev: View, a: Action): View {
       }
     }
     case 'prior_verdicts':
-      return { ...v, prior: { count: e.count, items: e.items, error: e.error } }
+      return { ...v, prior: { count: e.count, items: e.items, error: e.error, section: e.section, ignored: e.ignored } }
+    case 'prior_refused':
+      return { ...v, feed: [...v.feed, { kind: 'refused', branch: e.branch, prior: e.prior, text: e.text, seed: e.seed, t: e.t, mock }] }
+    case 'prior_duplicate':
+      return { ...v, holds: [...v.holds, { help: e.help, branch: e.branch, prior: e.prior, text: e.text, t: e.t, mock }] }
     case 'papiers_written':
       return v
     case 'directive_added':
@@ -214,7 +223,7 @@ export function reduce(prev: View, a: Action): View {
       }
     }
     case 'plan_change':
-      return { ...v, feed: [...v.feed, { kind: 'plan_change', help: e.help, text: e.text, t: e.t, mock }] }
+      return { ...v, holds: v.holds.filter(x => x.help !== e.help), feed: [...v.feed, { kind: 'plan_change', help: e.help, text: e.text, t: e.t, mock }] }
     case 'agent_log':
       // provider failover and explanation fallbacks are diagnostics, older logs still carry them
       return DIAGNOSTIC.test(e.text) ? v : { ...v, log: [...v.log, { t: e.t, text: e.text }] }

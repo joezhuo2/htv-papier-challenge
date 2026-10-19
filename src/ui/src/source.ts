@@ -42,7 +42,7 @@ export const MAX_GAP_MS = 4000
 
 // required payload keys per event type, checked on load so a bad log gives a clear error instead of a blank screen
 export const REQUIRED: Record<DemoEvent['type'], string[]> = {
-  session_started: ['baselines', 'branch'], papiers_context: [], prior_verdicts: ['count', 'items'], papiers_written: ['results'], directive_added: ['directive'], conflict_detected: ['directives', 'reason'],
+  session_started: ['baselines', 'branch'], papiers_context: [], prior_verdicts: ['count', 'items'], prior_refused: ['branch', 'prior', 'text'], prior_duplicate: ['help', 'branch', 'prior', 'text'], papiers_written: ['results'], directive_added: ['directive'], conflict_detected: ['directives', 'reason'],
   branch_created: ['branch'], branch_status: ['branch', 'status'], hypothesis_proposed: ['hypothesis'], run_started: ['run', 'branch', 'hypothesis'],
   run_finished: ['run'], verdict: ['hypothesis', 'verdict', 'provisional', 'reason', 'checks', 'bound'], post_mortem: ['post_mortem'],
   summary: ['summary'], help_requested: ['help'], help_answered: ['help', 'option', 'by'], help_cancelled: ['help', 'reason'], plan_change: ['help', 'text'], agent_log: ['text'],

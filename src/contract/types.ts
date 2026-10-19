@@ -70,6 +70,8 @@ export interface Hypothesis {
   params: Params
   note?: string
   papiers?: string // the id of the Papiers item the note cites by its document title, absent in older logs that put the id in the note
+  base?: Params // the config the change is measured from, absent in older logs
+  rounds?: number // timing rounds of a retest, absent for the harness default
 }
 
 export interface Run {
@@ -106,7 +108,20 @@ export interface PapiersNote {
 }
 
 // a verdict an earlier session wrote to Papiers, parsed from its [RWR] note: context for the agent, never evidence
-export interface PriorVerdict { id: string; doc_id?: string; document_title?: string; run: string; verdict: string; measured: string; bound: string; reason: string }
+export interface PriorVerdict {
+  id: string; doc_id?: string; document_title?: string; run: string; verdict: string; measured: string; bound: string; reason: string
+  fp?: PriorFingerprint // absent in notes written before fingerprints: context only, they never block
+}
+
+// what an earlier session tested: the params changed from base, under which bounds, with how many timing rounds
+export interface PriorFingerprint {
+  params: Record<string, string | number>
+  base: Record<string, string | number>
+  kernel: string
+  title: string
+  bounds: { std: string; adv: string }
+  rounds: number
+}
 
 // one approved write-back item: written only after the CLI exited 0
 export interface WriteResult { id: string; status: 'written' | 'already_written' | 'failed'; error?: string }
@@ -196,7 +211,13 @@ export type DemoEvent =
   // one event per read: the search query and one returned note, highlight or conversation, or no note when the search returned nothing
   | Ev<'papiers_context', { query?: string; note?: PapiersNote }>
   // once at session start: the [RWR] notes earlier sessions wrote, count 0 when none was found, error when Papiers could not be read
-  | Ev<'prior_verdicts', { count: number; items: PriorVerdict[]; error?: string }>
+  // section is the exact prior-verdicts text sent to the model, logged again with the branch when its bounds change which rows block, ignored when
+  // the session was started with prior verdicts off
+  | Ev<'prior_verdicts', { count: number; items: PriorVerdict[]; error?: string; section?: string; branch?: string; ignored?: boolean }>
+  // the agent's proposal repeated an earlier session's experiment under the same bounds and was refused before it ran, seed is set for the harness-seeded FP16 variant
+  | Ev<'prior_refused', { branch: string; prior: PriorVerdict; text: string; seed?: boolean }>
+  // a human's hunch (help is its directive id) repeats an earlier session's experiment: nothing runs until a confirm_prior command answers it
+  | Ev<'prior_duplicate', { help: string; branch: string; prior: PriorVerdict; text: string }>
   | Ev<'directive_added', { directive: Directive }>
   | Ev<'conflict_detected', { directives: string[]; reason: string }>
   | Ev<'branch_created', { branch: Branch; reason?: string }>
@@ -230,6 +251,7 @@ export type Command =
   | { type: 'answer_help'; help: string; option: string; note?: string; by: Lens }
   | { type: 'approve_hybrid'; branches: string[] }
   // record runs the full loop for up to RECORD_HYPS hypotheses and saves the log as a replay, the default start keeps the live demo cap
-  | { type: 'start'; record?: boolean }
+  | { type: 'start'; record?: boolean; ignore_prior?: boolean } // ignore_prior turns off the read-back and the repeat guard for this session
+  | { type: 'confirm_prior'; help: string; run: boolean }
   | { type: 'stop' }
   | { type: 'retry' }
